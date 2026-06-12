@@ -38,3 +38,4 @@ Thumbs.db
 *.swp
 
 synthese_modele_prophet_v3.md
+pipeline.py

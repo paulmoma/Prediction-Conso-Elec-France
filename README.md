@@ -1,11 +1,11 @@
-# ⚡ Prévision consommation électrique France — Prophet
+# Prévision consommation électrique France, modèle Prophet
 
 Modèle de prévision de la consommation électrique nationale française
 à horizons **7 jours** et **30 jours**, construit uniquement avec des données
 publiques gratuites.
 
 > Projet réalisé dans le cadre d'une formation Data Engineer (ENSTA Paris).  
-> Voir aussi : [NEBCO — mécanisme d'effacement](https://github.com/paulmoma/Nebco---mecanisme-d-effacement)
+> Voir aussi : [NEBCO - mécanisme d'effacement](https://github.com/paulmoma/Nebco---mecanisme-d-effacement)
 > *(ce modèle fournit la baseline de consommation nécessaire au dispatch NEBCO)*
 
 ---
@@ -16,10 +16,10 @@ publiques gratuites.
 |--------|-----------------|-----------------|
 | **Prophet 7j** | 2.17%* | **2.90%** |
 | **Prophet 30j** | 2.37%* | **2.53%** |
-| Naïf saisonnier | — | 8.9% |
-| TimesFM zero-shot (200M) | — | 8.3% |
+| Naïf saisonnier | - | 8.9% |
+| TimesFM zero-shot (200M) | - | 8.3% |
 
-*\*MAPE CV biaisé par sélection sur 100 trials Optuna — voir note méthodologique*
+*\*MAPE CV biaisé par sélection sur 100 trials Optuna - voir note méthodologique*
 
 **MAPE production** = rolling validation sur données jamais vues (2026).
 
@@ -28,8 +28,8 @@ publiques gratuites.
 ## Méthodologie
 
 ### Données
-- **Consommation** : [RTE eco2mix](https://www.rte-france.com/eco2mix) — granularité 15 min → agrégée en journalier
-- **Météo** : [Open-Meteo](https://open-meteo.com) Archive API — temp mean/min/max
+- **Consommation** : [RTE eco2mix](https://www.rte-france.com/eco2mix) - granularité 15 min → agrégée en journalier
+- **Météo** : [Open-Meteo](https://open-meteo.com) Archive API - temp mean/min/max
 
 ### Représentation spatiale de la température
 4 points ruraux pondérés (hors îlots de chaleur urbains +1.47°C) :
@@ -83,20 +83,19 @@ et les placer dans `data/`.
 ## Usage
 
 ```bash
-# Run complet (entraînement + prévisions + MLflow)
-python pipeline.py
+# Réentraînement manuel
+python retrain.py
 
-# Sans MLflow
-python pipeline.py --no-mlflow
+# Run hebdomadaire (validation + prévisions + retrain)
+python run_weekly.py
 
 # Dashboard Streamlit
 streamlit run app.py
 ```
 
-### Automatisation (cron 2× par semaine)
+### Automatisation (cron lundi + jeudi à 10h)
 ```bash
-# crontab -e
-0 6 * * 1,4 /path/to/env/bin/python /path/to/pipeline.py
+bash cron_setup.sh
 ```
 
 ---
@@ -109,9 +108,11 @@ streamlit run app.py
 │   ├── features.py    # HDD/CDD/lags/pct_vacances, BEST_PARAMS_7J et 30J
 │   ├── model.py       # Build/train/predict Prophet 7j et 30j
 │   └── evaluate.py    # Métriques, plots, test overfitting Mann-Whitney
-├── pipeline.py        # Orchestration complète + MLflow
+├── retrain.py         # Réentraînement + évaluation holdout + promotion MLflow
+├── run_weekly.py      # Pipeline hebdomadaire (validation + prévisions + retrain)
+├── run_if_needed.sh   # Guard idempotence pour le cron
+├── cron_setup.sh      # Configuration automatique du cron
 ├── app.py             # Dashboard Streamlit
-├── notebooks/         # Exploration, Optuna, validation
 ├── requirements.txt
 └── data/              # Non versionné (.gitignore)
     ├── conso_mix_RTE_YYYY.xls   # À télécharger depuis RTE
@@ -124,7 +125,7 @@ streamlit run app.py
 ## Note méthodologique
 
 Le MAPE CV Optuna (2.17% / 2.37%) est biaisé par la **sélection sur 100 trials** :
-Optuna évalue 100 combinaisons sur les mêmes folds et retient le minimum — ce minimum
+Optuna évalue 100 combinaisons sur les mêmes folds et retient le minimum - ce minimum
 est systématiquement trop optimiste. Les paramètres restent valides ; seule l'estimation
 de performance l'est pas. Le MAPE de production honnête (2.90% / 2.53%) est évalué
 sur un rolling CV indépendant ou sur des données jamais vues.

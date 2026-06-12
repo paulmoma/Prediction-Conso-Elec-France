@@ -117,7 +117,22 @@ def make_forecast_chart(df_hist: pd.DataFrame,
         name='Prévision', line=dict(color=color, width=2.5),
         mode='lines'
     ))
-    fig.add_vline(x=df_fc['ds'].min(), line_dash='dot', line_color='gray', opacity=0.6)
+    split = df_fc['ds'].min()
+    fig.add_vline(x=split, line_dash='dot', line_color='gray', opacity=0.6)
+
+    # Annotation si gap entre fin du réalisé et début de prévision
+    if not df_hist.empty:
+        last_rte = df_hist['ds'].max()
+        gap_days = (split - last_rte).days
+        if gap_days > 1:
+            mid_gap = last_rte + (split - last_rte) / 2
+            fig.add_annotation(
+                x=mid_gap, y=1, yref='paper',
+                text=f'données RTE<br>non publiées<br>({gap_days}j)',
+                showarrow=False, font=dict(size=10, color='gray'),
+                bgcolor='white', opacity=0.7,
+            )
+
     fig.update_layout(
         title=title, yaxis_title='GW',
         hovermode='x unified', height=350,
@@ -139,9 +154,23 @@ def make_validation_chart(df_rte: pd.DataFrame,
                            model: str) -> go.Figure:
     fig = go.Figure()
 
-    if not df_rte.empty:
+    # Calcule la fenêtre à afficher : autour des dates des prévisions sélectionnées
+    fc_dates = []
+    for run_date in selected_runs:
+        df_fc = past_fcs.get(run_date)
+        if df_fc is not None:
+            fc_dates.extend(df_fc['ds'].tolist())
+
+    if fc_dates:
+        x_min = min(fc_dates) - timedelta(days=14)
+        x_max = max(fc_dates) + timedelta(days=2)
+        df_rte_win = df_rte[(df_rte['ds'] >= x_min) & (df_rte['ds'] <= x_max)]
+    else:
+        df_rte_win = df_rte
+
+    if not df_rte_win.empty:
         fig.add_trace(go.Scatter(
-            x=df_rte['ds'], y=df_rte['y'],
+            x=df_rte_win['ds'], y=df_rte_win['y'],
             name='Réalisé RTE', line=dict(color='#3498db', width=2),
             mode='lines'
         ))
