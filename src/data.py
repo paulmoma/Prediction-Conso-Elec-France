@@ -223,22 +223,63 @@ def get_temperature_weighted(start: str, end: str,
     return df_weighted
 
 
+def _climatology_for_dates(dates: pd.Series,
+                            cache_dir: Path = DATA_DIR,
+                            points: dict = POINTS_RURAUX,
+                            window: int = 15) -> pd.DataFrame:
+    """
+    Moyenne climatologique pondérée par jour de l'année, calculée depuis
+    les fichiers cache historiques. Lissage sur une fenêtre de `window` jours
+    pour éviter les artefacts de jour de l'année.
+    """
+    sum_poids = sum(v['poids'] for v in points.values())
+    clim_by_point = {}
+
+    for nom, info in points.items():
+        cache_file = cache_dir / f'temp_{nom}.csv'
+        if not cache_file.exists():
+            logger.warning(f"Cache absent pour {nom}, climatologie indisponible")
+            return pd.DataFrame()
+        df_hist = pd.read_csv(cache_file, parse_dates=['ds'])
+        df_hist['doy'] = df_hist['ds'].dt.dayofyear
+        for col in ['temp', 'temp_min', 'temp_max']:
+            clim_by_point[f'{nom}_{col}'] = (
+                df_hist.groupby('doy')[col].mean()
+                       .rolling(window, center=True, min_periods=1).mean()
+            )
+
+    result = pd.DataFrame({'ds': dates.reset_index(drop=True)})
+    result['doy'] = result['ds'].dt.dayofyear
+    for col in ['temp', 'temp_min', 'temp_max']:
+        result[col] = sum(
+            result['doy'].map(clim_by_point[f'{nom}_{col}']) * info['poids']
+            for nom, info in points.items()
+        ) / sum_poids
+
+    return result[['ds', 'temp', 'temp_min', 'temp_max']]
+
+
 def get_temperature_forecast(horizon_days: int = 7,
-                              points: dict = POINTS_RURAUX) -> pd.DataFrame:
+                              points: dict = POINTS_RURAUX,
+                              cache_dir: Path = DATA_DIR) -> pd.DataFrame:
     """
     Prévisions de température pondérées pour les N prochains jours.
-    Utilisé en production pour alimenter le modèle.
+    J+1 a J+16 : Open-Meteo Forecast API.
+    J+17 a J+horizon : moyenne climatologique par jour de l'annee (depuis cache historique).
 
     Args:
-        horizon_days : nombre de jours à prévoir (max 16)
+        horizon_days : nombre de jours a prevoir (sans limite)
         points       : dict {nom: {lat, lon, poids}}
+        cache_dir    : dossier contenant les caches historiques
 
     Returns:
         DataFrame [ds, temp, temp_min, temp_max]
     """
+    # Partie J+1 a J+16 : prévision Open-Meteo
     dfs = {}
     for nom, info in points.items():
-        dfs[nom] = _fetch_open_meteo_forecast(info['lat'], info['lon'], horizon_days)
+        dfs[nom] = _fetch_open_meteo_forecast(info['lat'], info['lon'],
+                                               min(horizon_days, 16))
 
     dates     = dfs[list(points.keys())[0]]['ds']
     sum_poids = sum(v['poids'] for v in points.values())
@@ -249,6 +290,23 @@ def get_temperature_forecast(horizon_days: int = 7,
             dfs[nom][col].values * info['poids']
             for nom, info in points.items()
         ) / sum_poids
+
+    # Partie J+17 a J+horizon : climatologie
+    if horizon_days > 16:
+        last_fc_date = df_forecast['ds'].max()
+        extra_dates  = pd.date_range(
+            start=last_fc_date + pd.Timedelta(days=1),
+            periods=horizon_days - 16,
+            freq='D'
+        )
+        df_clim = _climatology_for_dates(pd.Series(extra_dates), cache_dir, points)
+        if df_clim.empty:
+            logger.warning("Climatologie indisponible, ffill utilisé pour J+17 a J+30")
+            df_clim = pd.DataFrame({'ds': extra_dates})
+            for col in ['temp', 'temp_min', 'temp_max']:
+                df_clim[col] = df_forecast[col].iloc[-1]
+        df_forecast = pd.concat([df_forecast, df_clim], ignore_index=True)
+        logger.info(f"Température J+17 a J+{horizon_days} : moyenne climatologique")
 
     return df_forecast
 

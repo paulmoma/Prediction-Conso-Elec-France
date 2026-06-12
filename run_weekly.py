@@ -140,11 +140,7 @@ def build_feature_dfs(df_rte: pd.DataFrame,
     )
     validate_temperature(df_temp_hist, 'hist')
 
-    df_temp_fc = get_temperature_forecast(horizon_days=16)
-    df_temp_fc[['temp', 'temp_min', 'temp_max']] = (
-        df_temp_fc[['temp', 'temp_min', 'temp_max']]
-        .interpolate(method='linear').ffill()
-    )
+    df_temp_fc = get_temperature_forecast(horizon_days=30, cache_dir=DATA_DIR)
 
     df_model = build_df_model(df_rte, df_temp_hist)
 

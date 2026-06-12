@@ -4,7 +4,7 @@ Modèle de prévision de la consommation électrique nationale française
 à horizons **7 jours** et **30 jours**, construit uniquement avec des données
 publiques gratuites.
 
-> Projet réalisé dans le cadre d'une formation Data Engineer (ENSTA Paris).  
+> Projet réalisé dans le cadre d'une formation Data Engineer (Campus Numérique in the Alps).  
 > Voir aussi : [NEBCO - mécanisme d'effacement](https://github.com/paulmoma/Nebco---mecanisme-d-effacement)
 > *(ce modèle fournit la baseline de consommation nécessaire au dispatch NEBCO)*
 
@@ -19,7 +19,7 @@ publiques gratuites.
 | Naïf saisonnier | - | 8.9% |
 | TimesFM zero-shot (200M) | - | 8.3% |
 
-*\*MAPE CV biaisé par sélection sur 100 trials Optuna - voir note méthodologique*
+*MAPE CV optimiste : retient le meilleur résultat parmi 100 combinaisons d'hyperparamètres testées par Optuna (recherche bayésienne, plus efficace qu'un grid search aléatoire)*
 
 **MAPE production** = rolling validation sur données jamais vues (2026).
 
@@ -29,7 +29,7 @@ publiques gratuites.
 
 ### Données
 - **Consommation** : [RTE eco2mix](https://www.rte-france.com/eco2mix) - granularité 15 min → agrégée en journalier
-- **Météo** : [Open-Meteo](https://open-meteo.com) Archive API - temp mean/min/max
+- **Météo** : [Open-Meteo](https://open-meteo.com) Archive API - temp mean/min/max pour les prévisions jusqu'à J+16, moyennes des données des 3 dernières années ensuite.
 
 ### Représentation spatiale de la température
 4 points ruraux pondérés (hors îlots de chaleur urbains +1.47°C) :
