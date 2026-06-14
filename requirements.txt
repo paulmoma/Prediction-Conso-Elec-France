@@ -1,18 +1,18 @@
-# ── Modélisation ──────────────────────────────────────────────────────────────
+# Modélisation
 prophet>=1.1.5        # modèle principal
 scikit-learn>=1.3.0   # métriques (MAPE, MAE)
 scipy>=1.11.0         # test Mann-Whitney
 optuna>=3.4.0         # optimisation bayésienne des hyperparamètres
 
-# ── Données ───────────────────────────────────────────────────────────────────
+# Données
 pandas>=2.0.0
 numpy>=1.26.0
 requests>=2.31.0      # appels Open-Meteo API
 
-# ── Visualisation ─────────────────────────────────────────────────────────────
+# Visualisation
 matplotlib>=3.8.0
 plotly>=5.18.0
 streamlit>=1.30.0     # dashboard app.py
 
-# ── Tracking (optionnel) ──────────────────────────────────────────────────────
-mlflow>=2.9.0         # logging expériences — pas nécessaire pour pipeline.py --no-mlflow
+# Tracking
+mlflow>=2.9.0         # tracking expériences + Model Registry

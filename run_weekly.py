@@ -1,14 +1,14 @@
 """
 run_weekly.py
-Pipeline hebdomadaire : lundi et jeudi à 6h.
+Pipeline bi-hebdomadaire : lundi et jeudi à 10h.
 
 Étape 1 : Valide les prévisions passées vs données RTE réelles
 Étape 2 : Charge le modèle Production du registry + génère les nouvelles prévisions
+Étape 3 : Appelle retrain.py pour réentraîner et évaluer la promotion en Production
 
-Le réentraînement est géré séparément par retrain.py (mensuel ou manuel).
 Fallback : si aucun modèle Production n'existe encore dans le registry, entraîne à la volée.
 
-Cron : 0 6 * * 1,4 cd /path/to/project && /path/to/python run_weekly.py >> logs/pipeline.log 2>&1
+Cron : 0 10 * * 1,4 cd /path/to/project && /path/to/python run_weekly.py >> logs/pipeline.log 2>&1
 MLflow UI : mlflow ui --backend-store-uri sqlite:///mlflow.db --port 5001
 """
 
@@ -28,7 +28,7 @@ from src.features import make_all_features
 from src.model import predict, train
 import retrain as retrain_module
 
-# ── Configuration ─────────────────────────────────────────────────────────────
+# Configuration
 DATA_DIR        = Path('data')
 FORECAST_DIR    = DATA_DIR / 'forecasts'
 LOG_DIR         = Path('logs')
@@ -52,9 +52,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# ════════════════════════════════════════════════════════════════════════════════
 # Étape 1 : Validation rétrospective
-# ════════════════════════════════════════════════════════════════════════════════
 
 def find_last_forecast(model: str) -> Path | None:
     """Retourne le fichier de prévision le plus récent (hors aujourd'hui)."""
@@ -64,10 +62,7 @@ def find_last_forecast(model: str) -> Path | None:
 
 
 def validate_past_forecasts(df_rte: pd.DataFrame) -> dict:
-    """
-    Compare les prévisions du run précédent avec les vraies données RTE.
-    Met à jour data/validation_log.csv et retourne les métriques par modèle.
-    """
+    """Compare les prévisions du run précédent aux données RTE réelles, met à jour validation_log.csv."""
     results = {}
 
     for model in ['7j', '30j']:
@@ -124,16 +119,11 @@ def validate_past_forecasts(df_rte: pd.DataFrame) -> dict:
     return results
 
 
-# ════════════════════════════════════════════════════════════════════════════════
 # Étape 2 : Prévisions avec le modèle Production
-# ════════════════════════════════════════════════════════════════════════════════
 
 def build_feature_dfs(df_rte: pd.DataFrame,
                        today: str) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Construit les DataFrames avec features pour 7j et 30j,
-    en y ajoutant les prévisions de température futures.
-    """
+    """Construit les DataFrames features 7j et 30j, températures historiques + prévisions."""
     df_temp_hist = get_temperature_weighted(
         start=TRAIN_START, end=today,
         points=POINTS_RURAUX, cache_dir=DATA_DIR
@@ -141,6 +131,7 @@ def build_feature_dfs(df_rte: pd.DataFrame,
     validate_temperature(df_temp_hist, 'hist')
 
     df_temp_fc = get_temperature_forecast(horizon_days=30, cache_dir=DATA_DIR)
+    df_temp_fc.to_csv(DATA_DIR / 'temperature_forecast.csv', index=False)
 
     df_model = build_df_model(df_rte, df_temp_hist)
 
@@ -162,10 +153,7 @@ def build_feature_dfs(df_rte: pd.DataFrame,
 
 
 def load_production_models() -> tuple:
-    """
-    Charge les modèles Production depuis le MLflow Model Registry.
-    Retourne (m_7j, m_30j, source) où source vaut 'registry' ou 'retrain'.
-    """
+    """Charge les modèles Production depuis le registry. Retourne (m_7j, m_30j, source)."""
     try:
         m_7j  = mlflow.prophet.load_model(f"models:/{MODEL_NAMES['7j']}/Production")
         m_30j = mlflow.prophet.load_model(f"models:/{MODEL_NAMES['30j']}/Production")
@@ -191,9 +179,7 @@ def save_dated_forecasts(fc_7j: pd.DataFrame, fc_30j: pd.DataFrame) -> None:
         logger.info(f"[{model}] Prévision sauvegardée → {dated_path.name}")
 
 
-# ════════════════════════════════════════════════════════════════════════════════
 # Run principal
-# ════════════════════════════════════════════════════════════════════════════════
 
 def main():
     today = str(date.today())
@@ -206,7 +192,7 @@ def main():
 
     with mlflow.start_run(run_name=f"weekly_{today}") as run_ctx:
 
-        # ── Données RTE (chargées une seule fois, réutilisées aux deux étapes) ─
+        # Données RTE
         logger.info("Chargement données RTE...")
         rte_files = sorted(DATA_DIR.glob('conso_mix_RTE_*.xls'))
         if not rte_files:
@@ -216,7 +202,7 @@ def main():
             )
         df_rte = load_rte_daily([str(f) for f in rte_files])
 
-        # ── Étape 1 : Validation rétrospective ───────────────────────────────
+        # Étape 1 : validation rétrospective
         logger.info("── ÉTAPE 1 : Validation rétrospective ──")
         validation = validate_past_forecasts(df_rte)
 
@@ -232,7 +218,7 @@ def main():
         if retro_metrics:
             mlflow.log_metrics(retro_metrics)
 
-        # ── Étape 2 : Prévisions ─────────────────────────────────────────────
+        # Étape 2 : nouvelles prévisions
         logger.info("── ÉTAPE 2 : Nouvelles prévisions ──")
 
         logger.info("Construction des features...")
@@ -250,7 +236,7 @@ def main():
 
         save_dated_forecasts(fc_7j, fc_30j)
 
-        # ── Tags de synthèse ─────────────────────────────────────────────────
+        # Tags de synthèse
         mlflow.set_tags({
             'run_date'    : today,
             'model_source': model_source,
@@ -264,7 +250,7 @@ def main():
                     f"{'✅ OK' if all_ok else '⚠️  ALERTE'}")
         logger.info(f"{'='*55}")
 
-    # ── Étape 3 : Réentraînement ─────────────────────────────────────────────
+    # Étape 3 : réentraînement
     logger.info("── ÉTAPE 3 : Réentraînement ──")
     retrain_module.run()
 

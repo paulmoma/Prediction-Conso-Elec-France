@@ -23,15 +23,7 @@ DEFAULT_TRAIN_START = '2023-01-01'
 
 
 def build_model(model: str = '30j') -> Prophet:
-    """
-    Instancie Prophet selon le modèle cible ('7j' ou '30j').
-
-    Args:
-        model : '7j' ou '30j'
-
-    Returns:
-        Prophet non entraîné
-    """
+    """Instancie Prophet non entraîné selon le modèle cible ('7j' ou '30j')."""
     params = BEST_PARAMS_7J if model == '7j' else BEST_PARAMS_30J
 
     m = Prophet(
@@ -69,18 +61,7 @@ def train(df: pd.DataFrame,
           model: str = '30j',
           train_start: str = DEFAULT_TRAIN_START,
           train_end: str = None) -> Prophet:
-    """
-    Entraîne Prophet sur la fenêtre spécifiée.
-
-    Args:
-        df          : DataFrame avec [ds, y] + features
-        model       : '7j' ou '30j'
-        train_start : début de la fenêtre (défaut 2023-01-01)
-        train_end   : fin (None = toutes les données disponibles)
-
-    Returns:
-        Prophet entraîné
-    """
+    """Entraîne Prophet sur [train_start, train_end] (train_end=None → toutes les données)."""
     feat_cols = get_feature_cols(model)
 
     mask = df['ds'] >= train_start
@@ -106,18 +87,7 @@ def predict(m: Prophet,
             df: pd.DataFrame,
             model: str = '30j',
             horizon: int = None) -> pd.DataFrame:
-    """
-    Génère des prévisions.
-
-    Args:
-        m       : Prophet entraîné
-        df      : DataFrame complet incluant features futures
-        model   : '7j' ou '30j'
-        horizon : None = utilise le défaut du modèle (7 ou 30)
-
-    Returns:
-        DataFrame Prophet complet [ds, yhat, yhat_lower, yhat_upper, ...]
-    """
+    """Génère des prévisions sur `horizon` jours (défaut : 7 ou 30 selon le modèle)."""
     if horizon is None:
         horizon = 7 if model == '7j' else 30
 
@@ -145,19 +115,8 @@ def forecast(df: pd.DataFrame,
              model: str = '30j',
              train_start: str = DEFAULT_TRAIN_START) -> pd.DataFrame:
     """
-    Pipeline complète : entraîne sur tout df et retourne les N prochains jours.
-
-    Utilisé en production : df doit inclure les features futures
-    (températures prévues + pct_vacances).
-
-    Args:
-        df          : DataFrame complet [ds, y, features]
-                      Les jours futurs n'ont pas de 'y'
-        model       : '7j' ou '30j'
-        train_start : début de la fenêtre glissante
-
-    Returns:
-        DataFrame [ds, yhat, yhat_lower, yhat_upper] pour l'horizon
+    Pipeline complet : entraîne sur tout df et retourne les N prochains jours.
+    df doit inclure les features futures (températures prévues + pct_vacances).
     """
     horizon  = 7 if model == '7j' else 30
     m        = train(df, model=model, train_start=train_start)

@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 
-# ── Paramètres 30j (Optuna, horizon='30 days') ───────────────────────────────
+# Paramètres 30j (Optuna, horizon='30 days')
 BEST_PARAMS_30J = {
     'changepoint_prior_scale': 0.01,
     'fourier_yearly'  : 7,
@@ -28,7 +28,7 @@ BEST_PARAMS_30J = {
     'lag_ete'         : 1,
 }
 
-# ── Paramètres 7j (Optuna joint avec pct_vacances, horizon='7 days') ─────────
+# Paramètres 7j (Optuna joint avec pct_vacances, horizon='7 days')
 BEST_PARAMS_7J = {
     'changepoint_prior_scale': 0.2,
     'fourier_yearly'  : 11,
@@ -50,9 +50,7 @@ FEATURE_COLS_30J = ['HDD', 'CDD', 'HDD_mean', 'CDD_mean', 'lag_hiver', 'lag_ete'
 FEATURE_COLS_7J  = ['HDD', 'CDD', 'HDD_mean', 'CDD_mean', 'lag_hiver', 'lag_ete',
                     'pct_vac']
 
-# ════════════════════════════════════════════════════════════════════════════════
 # Vacances scolaires pondérées
-# ════════════════════════════════════════════════════════════════════════════════
 
 POIDS_ZONES = {'A': 0.32, 'B': 0.40, 'C': 0.28}
 
@@ -66,7 +64,7 @@ VACANCES = {
         ('2025-02-15','2025-03-02'), ('2025-04-19','2025-05-05'),
         ('2025-07-05','2025-09-01'), ('2025-10-18','2025-11-03'),
         ('2025-12-20','2026-01-04'), ('2026-02-14','2026-03-01'),
-        ('2026-04-18','2026-05-04'),
+        ('2026-04-18','2026-05-04'), ('2026-07-04','2026-09-01'),
     ],
     'B': [
         ('2023-02-04','2023-02-19'), ('2023-04-15','2023-05-02'),
@@ -77,7 +75,7 @@ VACANCES = {
         ('2025-02-22','2025-03-09'), ('2025-04-26','2025-05-12'),
         ('2025-07-05','2025-09-01'), ('2025-10-18','2025-11-03'),
         ('2025-12-20','2026-01-04'), ('2026-02-21','2026-03-08'),
-        ('2026-04-25','2026-05-11'),
+        ('2026-04-25','2026-05-11'), ('2026-07-04','2026-09-01'),
     ],
     'C': [
         ('2023-02-18','2023-03-05'), ('2023-04-29','2023-05-15'),
@@ -88,16 +86,13 @@ VACANCES = {
         ('2025-03-01','2025-03-16'), ('2025-05-03','2025-05-19'),
         ('2025-07-05','2025-09-01'), ('2025-10-18','2025-11-03'),
         ('2025-12-20','2026-01-04'), ('2026-02-28','2026-03-15'),
-        ('2026-05-02','2026-05-18'),
+        ('2026-05-02','2026-05-18'), ('2026-07-04','2026-09-01'),
     ],
 }
 
 
 def make_pct_vacances(dates: pd.Series) -> np.ndarray:
-    """
-    % d'élèves en vacances pour chaque date (0.0 → 1.0).
-    Connu à l'avance → information parfaite pour les 7 prochains jours.
-    """
+    """Retourne le % d'élèves en vacances pour chaque date (0.0 → 1.0)."""
     result = np.zeros(len(dates))
     for zone, periodes in VACANCES.items():
         w = POIDS_ZONES[zone]
@@ -107,9 +102,7 @@ def make_pct_vacances(dates: pd.Series) -> np.ndarray:
     return result.round(4)
 
 
-# ════════════════════════════════════════════════════════════════════════════════
 # Feature engineering
-# ════════════════════════════════════════════════════════════════════════════════
 
 def make_hdd_cdd(df: pd.DataFrame, params: dict) -> pd.DataFrame:
     """4 régresseurs température (non-linéarité via clip)."""
@@ -132,18 +125,8 @@ def make_seasonal_lags(df: pd.DataFrame, params: dict) -> pd.DataFrame:
     return df
 
 
-def make_all_features(df: pd.DataFrame,
-                      model: str = '30j') -> pd.DataFrame:
-    """
-    Feature engineering complet selon le modèle cible.
-
-    Args:
-        df    : DataFrame avec [ds, temp, temp_min, temp_max]
-        model : '7j' ou '30j'
-
-    Returns:
-        df enrichi avec toutes les features du modèle choisi
-    """
+def make_all_features(df: pd.DataFrame, model: str = '30j') -> pd.DataFrame:
+    """Feature engineering complet selon le modèle cible ('7j' ou '30j')."""
     params = BEST_PARAMS_7J if model == '7j' else BEST_PARAMS_30J
     df     = make_hdd_cdd(df, params)
     df     = make_seasonal_lags(df, params)

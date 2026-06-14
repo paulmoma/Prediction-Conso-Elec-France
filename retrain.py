@@ -35,14 +35,14 @@ logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s %(levelname)s %(message)s')
 logger = logging.getLogger(__name__)
 
-# ── Configuration ─────────────────────────────────────────────────────────────
+# Configuration
 DATA_DIR        = Path('data')
 MLFLOW_DB       = 'sqlite:///mlflow.db'
 EXPERIMENT_NAME = 'EF_Retraining'
 TRAIN_START     = '2023-01-01'
 HOLD_OUT_WEEKS  = 8
 
-# Seuil de MAPE au-delà duquel on ne promeut pas (erreur trop grande)
+# Seuil de MAPE au-delà duquel on ne promeut pas
 MAPE_MAX_PROMOTE = 5.0
 # Test d'overfitting
 OVERFIT_ALPHA   = 0.05
@@ -52,16 +52,13 @@ OVERFIT_GAP_MAX = 0.40
 MODEL_NAMES = {'7j': 'prophet_7j', '30j': 'prophet_30j'}
 
 # Valeurs CV Optuna de référence (12 folds) : à mettre à jour après re-optimisation
-# Ces valeurs servent de baseline pour le test Mann-Whitney
 MAPE_CV_FOLDS = {
     '7j' : [2.17] * 12,
     '30j': [2.37] * 12,
 }
 
 
-# ════════════════════════════════════════════════════════════════════════════════
 # Helpers évaluation
-# ════════════════════════════════════════════════════════════════════════════════
 
 def rolling_weekly_mape(df_real: pd.DataFrame,
                          fc: pd.DataFrame,
@@ -86,10 +83,7 @@ def test_overfitting(mape_cv_folds: list,
                      mape_holdout_weeks: list,
                      alpha: float = OVERFIT_ALPHA,
                      gap_threshold: float = OVERFIT_GAP_MAX) -> dict:
-    """
-    Détecte l'overfitting par Mann-Whitney U + écart relatif.
-    Overfitting = test significatif ET écart > gap_threshold.
-    """
+    """Mann-Whitney U + écart relatif. Overfitting = test significatif ET écart > gap_threshold."""
     mape_cv      = np.mean(mape_cv_folds)
     mape_holdout = np.mean(mape_holdout_weeks)
     gap          = (mape_holdout - mape_cv) / mape_cv
@@ -114,10 +108,7 @@ def test_overfitting(mape_cv_folds: list,
 
 
 def should_promote(mape_holdout: float, overfit: dict) -> tuple[bool, str]:
-    """
-    Décide si le modèle mérite d'être promu en Production.
-    Retourne (décision, raison).
-    """
+    """Retourne (True, raison) si le modèle peut être promu en Production."""
     if overfit['overfit_alert']:
         return False, f"overfitting détecté (gap={overfit['gap_pct']:+.1f}% p={overfit['p_value']:.4f})"
     if mape_holdout > MAPE_MAX_PROMOTE:
@@ -125,26 +116,19 @@ def should_promote(mape_holdout: float, overfit: dict) -> tuple[bool, str]:
     return True, f"MAPE={mape_holdout:.2f}% OK, pas d'overfitting"
 
 
-# ════════════════════════════════════════════════════════════════════════════════
 # Promotion dans le Model Registry
-# ════════════════════════════════════════════════════════════════════════════════
 
 def promote_to_production(client: mlflow.tracking.MlflowClient,
                            model_name: str,
                            mape: float,
                            run_id: str) -> str:
-    """
-    Archive les versions Production existantes et promeut la dernière version Staging.
-    Retourne le numéro de version promu.
-    """
-    # Archive les Production actuelles
+    """Archive les versions Production existantes et promeut la dernière version en attente."""
     for v in client.get_latest_versions(model_name, stages=['Production']):
         client.transition_model_version_stage(model_name, v.version, 'Archived')
         client.set_model_version_tag(model_name, v.version, 'stage', 'Archived')
         client.set_model_version_tag(model_name, v.version, 'archived_date', str(date.today()))
         logger.info(f"[{model_name}] v{v.version} → Archived")
 
-    # Récupère la version qui vient d'être créée (stage 'None')
     candidates = client.get_latest_versions(model_name, stages=['None'])
     if not candidates:
         raise RuntimeError(f"Aucune version en attente pour {model_name}")
@@ -163,9 +147,7 @@ def promote_to_production(client: mlflow.tracking.MlflowClient,
     return new_version
 
 
-# ════════════════════════════════════════════════════════════════════════════════
 # Pipeline de réentraînement
-# ════════════════════════════════════════════════════════════════════════════════
 
 def run(dry_run: bool = False):
     today          = str(date.today())
@@ -176,7 +158,7 @@ def run(dry_run: bool = False):
         logger.info("  MODE DRY-RUN : aucune promotion ne sera effectuée")
     logger.info(f"{'='*60}")
 
-    # ── 1. Données températures ───────────────────────────────────────────────
+    # 1. Données températures
     logger.info("Chargement températures historiques...")
     df_temp_hist = get_temperature_weighted(
         start=TRAIN_START, end=today,
@@ -184,7 +166,7 @@ def run(dry_run: bool = False):
     )
     validate_temperature(df_temp_hist, 'hist')
 
-    # ── 2. Données consommation RTE ───────────────────────────────────────────
+    # 2. Données consommation RTE
     logger.info("Chargement consommation RTE...")
     rte_files = sorted(DATA_DIR.glob('conso_mix_RTE_*.xls'))
     if not rte_files:
@@ -194,22 +176,22 @@ def run(dry_run: bool = False):
         )
     df_daily = load_rte_daily([str(f) for f in rte_files])
 
-    # ── 3. Fusion + feature engineering ──────────────────────────────────────
+    # 3. Fusion + feature engineering
     df_model = build_df_model(df_daily, df_temp_hist)
     df_7j    = make_all_features(df_model, model='7j')
     df_30j   = make_all_features(df_model, model='30j')
 
-    # ── 4. Entraînement sur [TRAIN_START → hold_out_start] ───────────────────
+    # 4. Entraînement sur [TRAIN_START → hold_out_start]
     logger.info(f"Entraînement sur [TRAIN_START → {hold_out_start}]...")
     m_7j  = train(df_7j,  model='7j',  train_start=TRAIN_START, train_end=hold_out_start)
     m_30j = train(df_30j, model='30j', train_start=TRAIN_START, train_end=hold_out_start)
 
-    # ── 5. Prévisions sur le holdout (8 semaines = 56 jours) ─────────────────
+    # 5. Prévisions sur le holdout (8 semaines = 56 jours)
     logger.info("Prévisions sur la période holdout...")
     fc_7j  = predict(m_7j,  df_7j,  model='7j',  horizon=HOLD_OUT_WEEKS * 7)
     fc_30j = predict(m_30j, df_30j, model='30j', horizon=HOLD_OUT_WEEKS * 7)
 
-    # ── 6. Évaluation semaine par semaine ─────────────────────────────────────
+    # 6. Évaluation semaine par semaine
     logger.info("Évaluation holdout...")
     weeks_7j  = rolling_weekly_mape(df_7j,  fc_7j,  hold_out_start, today)
     weeks_30j = rolling_weekly_mape(df_30j, fc_30j, hold_out_start, today)
@@ -228,14 +210,13 @@ def run(dry_run: bool = False):
     logger.info(f"MAPE holdout 7j  : {mape_7j:.2f}%  MAE={mae_7j:,.0f}MW  ({len(weeks_7j)} semaines)")
     logger.info(f"MAPE holdout 30j : {mape_30j:.2f}%  MAE={mae_30j:,.0f}MW  ({len(weeks_30j)} semaines)")
 
-    # ── 7. Test overfitting ───────────────────────────────────────────────────
+    # 7. Test overfitting
     overfit_7j  = test_overfitting(MAPE_CV_FOLDS['7j'],
                                     [w['mape'] for w in weeks_7j])
     overfit_30j = test_overfitting(MAPE_CV_FOLDS['30j'],
                                     [w['mape'] for w in weeks_30j])
 
-    # ── 8. Décision de promotion ──────────────────────────────────────────────
-    # On promeut les deux modèles ensemble ou aucun (cohérence 7j/30j)
+    # 8. Décision de promotion (les deux modèles ensemble ou aucun)
     ok_7j,  reason_7j  = should_promote(mape_7j,  overfit_7j)
     ok_30j, reason_30j = should_promote(mape_30j, overfit_30j)
     promote = ok_7j and ok_30j
@@ -250,7 +231,7 @@ def run(dry_run: bool = False):
             reasons.append(f"30j : {reason_30j}")
         logger.warning(f"⚠️  Promotion refusée : {' | '.join(reasons)}")
 
-    # ── 9. MLflow logging ─────────────────────────────────────────────────────
+    # 9. MLflow logging
     mlflow.set_tracking_uri(MLFLOW_DB)
     mlflow.set_experiment(EXPERIMENT_NAME)
 
@@ -288,7 +269,7 @@ def run(dry_run: bool = False):
             'overfit_alert_30j'   : int(overfit_30j['overfit_alert']),
         })
 
-        # Enregistrement des modèles dans le Registry
+        # Enregistrement dans le Model Registry
         logger.info("Enregistrement des modèles dans le Model Registry...")
         mlflow.prophet.log_model(m_7j,  artifact_path='model_7j',
                                   registered_model_name=MODEL_NAMES['7j'])
@@ -334,9 +315,7 @@ def run(dry_run: bool = False):
     }
 
 
-# ════════════════════════════════════════════════════════════════════════════════
 # CLI
-# ════════════════════════════════════════════════════════════════════════════════
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Réentraînement avec holdout 8 semaines')

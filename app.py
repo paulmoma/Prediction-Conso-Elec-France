@@ -15,14 +15,14 @@ from pathlib import Path
 DATA_DIR     = Path('data')
 FORECAST_DIR = DATA_DIR / 'forecasts'
 
-# ── Configuration page ────────────────────────────────────────────────────────
+# Configuration page
 st.set_page_config(
     page_title  = '⚡ Prévision Conso France',
     page_icon   = '⚡',
     layout      = 'wide',
 )
 
-# ── Loaders ───────────────────────────────────────────────────────────────────
+# Loaders
 @st.cache_data(ttl=3600)
 def load_forecast(model: str) -> pd.DataFrame:
     path = DATA_DIR / f'forecast_{model}_latest.csv'
@@ -36,7 +36,6 @@ def load_forecast(model: str) -> pd.DataFrame:
 @st.cache_data(ttl=3600)
 def load_rte_actual(days: int = 180) -> pd.DataFrame:
     """Charge le réalisé RTE depuis les .xls (fallback sur rte_daily*.csv)."""
-    # Essai CSV pré-calculé
     csv_paths = sorted(DATA_DIR.glob('rte_daily*.csv'))
     if csv_paths:
         df = pd.concat([pd.read_csv(p, parse_dates=['ds']) for p in csv_paths])
@@ -45,7 +44,6 @@ def load_rte_actual(days: int = 180) -> pd.DataFrame:
         cutoff = pd.Timestamp(date.today() - timedelta(days=days))
         return df[df['ds'] >= cutoff].copy()
 
-    # Fallback : lecture directe des .xls
     xls_paths = sorted(DATA_DIR.glob('conso_mix_RTE_*.xls'))
     if not xls_paths:
         return pd.DataFrame()
@@ -87,7 +85,7 @@ def load_temp_forecast() -> pd.DataFrame:
     return pd.read_csv(path, parse_dates=['ds'])
 
 
-# ── Chart helpers ─────────────────────────────────────────────────────────────
+# Chart helpers
 def make_forecast_chart(df_hist: pd.DataFrame,
                          df_fc: pd.DataFrame,
                          title: str,
@@ -154,7 +152,6 @@ def make_validation_chart(df_rte: pd.DataFrame,
                            model: str) -> go.Figure:
     fig = go.Figure()
 
-    # Calcule la fenêtre à afficher : autour des dates des prévisions sélectionnées
     fc_dates = []
     for run_date in selected_runs:
         df_fc = past_fcs.get(run_date)
@@ -198,9 +195,7 @@ def make_validation_chart(df_rte: pd.DataFrame,
     return fig
 
 
-# ════════════════════════════════════════════════════════════════════════════════
 # Page principale
-# ════════════════════════════════════════════════════════════════════════════════
 
 st.title('⚡ Prévision consommation électrique journalière, périmètre France')
 st.caption(f"Mise à jour : {date.today().strftime('%d %B %Y')} | "
@@ -212,7 +207,7 @@ fc_30j  = load_forecast('30j')
 df_hist = load_rte_actual(days=60)
 df_temp = load_temp_forecast()
 
-# ── KPIs ──────────────────────────────────────────────────────────────────────
+# KPIs
 col1, col2, col3, col4 = st.columns(4)
 
 if not fc_7j.empty:
@@ -230,7 +225,7 @@ if not df_temp.empty and 'temp' in df_temp.columns:
 
 st.divider()
 
-# ── Onglets ───────────────────────────────────────────────────────────────────
+# Onglets
 tab1, tab2, tab3 = st.tabs([
     '📅 Prévision 7 jours',
     '📆 Prévision 30 jours',
@@ -240,7 +235,7 @@ tab1, tab2, tab3 = st.tabs([
 with tab1:
     fig_7j = make_forecast_chart(
         df_hist.tail(21), fc_7j,
-        title='Prévision J+7  Consommation France (GW)',
+        title='Prévision J+7 - Consommation France (GW)',
         color='rgb(46, 204, 113)'
     )
     st.plotly_chart(fig_7j, use_container_width=True)
@@ -258,7 +253,7 @@ with tab1:
 with tab2:
     fig_30j = make_forecast_chart(
         df_hist, fc_30j,
-        title='Prévision J+30  Consommation France (GW)',
+        title='Prévision J+30 - Consommation France (GW)',
         color='rgb(231, 76, 60)'
     )
     st.plotly_chart(fig_30j, use_container_width=True)
@@ -315,7 +310,7 @@ with tab3:
 
 st.divider()
 
-# ── Température prévue ────────────────────────────────────────────────────────
+# Température prévue
 if not df_temp.empty and 'temp' in df_temp.columns:
     st.subheader('🌡️ Températures prévues (4 points ruraux pondérés)')
     fig_temp = go.Figure()
@@ -337,7 +332,7 @@ if not df_temp.empty and 'temp' in df_temp.columns:
 
 st.divider()
 
-# ── À propos ──────────────────────────────────────────────────────────────────
+# À propos
 with st.expander('ℹ️ À propos du modèle'):
     st.markdown("""
     **Architecture** : Facebook Prophet (GAM) avec régresseurs exogènes

@@ -13,7 +13,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# ── Points ruraux pondérés (hors îlots de chaleur) ───────────────────────────
+# Points ruraux pondérés (hors îlots de chaleur)
 POINTS_RURAUX = {
     'Alencon'    : {'lat': 48.43, 'lon':  0.08, 'poids': 0.35},
     'Bar_le_Duc' : {'lat': 48.77, 'lon':  5.16, 'poids': 0.30},
@@ -24,23 +24,10 @@ POINTS_RURAUX = {
 DATA_DIR = Path('data')
 
 
-# ════════════════════════════════════════════════════════════════════════════════
 # RTE : Consommation
-# ════════════════════════════════════════════════════════════════════════════════
 
 def load_rte_xls(filepath: str) -> pd.DataFrame:
-    """
-    Parse un fichier RTE eco2mix (.xls en réalité TSV).
-
-    Format attendu :
-        Journée du DD/MM/YYYY
-        Heures\\tPrévisionJ-1\\tPrévisionJ\\tConsommation
-        00:00\\t46800\\t48000\\t46008
-        ...
-
-    Returns:
-        DataFrame avec colonnes [ds (datetime), y (MW)]
-    """
+    """Parse un fichier RTE eco2mix (.xls en réalité TSV), retourne [ds, y (MW)]."""
     rows = []
     current_date = None
 
@@ -71,15 +58,7 @@ def load_rte_xls(filepath: str) -> pd.DataFrame:
 
 
 def load_rte_daily(filepaths: list[str]) -> pd.DataFrame:
-    """
-    Charge plusieurs fichiers RTE, concatène et agrège en journalier.
-
-    Args:
-        filepaths: liste de chemins vers les fichiers .xls RTE
-
-    Returns:
-        DataFrame journalier avec colonnes [ds, y (MW moyen), total_GWh]
-    """
+    """Charge plusieurs fichiers RTE, concatène et agrège en journalier [ds, y (MW), total_GWh]."""
     frames = []
     for fp in filepaths:
         logger.info(f"Chargement : {fp}")
@@ -116,9 +95,7 @@ def load_rte_daily(filepaths: list[str]) -> pd.DataFrame:
     return df_daily
 
 
-# ════════════════════════════════════════════════════════════════════════════════
 # Open-Meteo : Températures
-# ════════════════════════════════════════════════════════════════════════════════
 
 def _fetch_open_meteo(lat: float, lon: float,
                       start: str, end: str,
@@ -178,14 +155,7 @@ def get_temperature_weighted(start: str, end: str,
     """
     Température pondérée nationale à partir de N points ruraux.
     Utilise un cache CSV par point pour éviter les re-téléchargements.
-
-    Args:
-        start, end : dates ISO 'YYYY-MM-DD'
-        points     : dict {nom: {lat, lon, poids}}
-        cache_dir  : dossier de cache
-
-    Returns:
-        DataFrame [ds, temp, temp_min, temp_max] pondéré
+    Retourne [ds, temp, temp_min, temp_max].
     """
     cache_dir.mkdir(exist_ok=True)
     dfs = {}
@@ -195,7 +165,6 @@ def get_temperature_weighted(start: str, end: str,
 
         if cache_file.exists():
             df_cached = pd.read_csv(cache_file, parse_dates=['ds'])
-            # Vérifier que le cache couvre la plage demandée
             if (df_cached['ds'].min().date() <= pd.Timestamp(start).date() and
                     df_cached['ds'].max().date() >= pd.Timestamp(end).date()):
                 dfs[nom] = df_cached[
@@ -264,18 +233,9 @@ def get_temperature_forecast(horizon_days: int = 7,
                               cache_dir: Path = DATA_DIR) -> pd.DataFrame:
     """
     Prévisions de température pondérées pour les N prochains jours.
-    J+1 a J+16 : Open-Meteo Forecast API.
-    J+17 a J+horizon : moyenne climatologique par jour de l'annee (depuis cache historique).
-
-    Args:
-        horizon_days : nombre de jours a prevoir (sans limite)
-        points       : dict {nom: {lat, lon, poids}}
-        cache_dir    : dossier contenant les caches historiques
-
-    Returns:
-        DataFrame [ds, temp, temp_min, temp_max]
+    J+1 à J+16 : Open-Meteo Forecast API.
+    J+17 à J+horizon : moyenne climatologique depuis les caches historiques.
     """
-    # Partie J+1 a J+16 : prévision Open-Meteo
     dfs = {}
     for nom, info in points.items():
         dfs[nom] = _fetch_open_meteo_forecast(info['lat'], info['lon'],
@@ -291,7 +251,6 @@ def get_temperature_forecast(horizon_days: int = 7,
             for nom, info in points.items()
         ) / sum_poids
 
-    # Partie J+17 a J+horizon : climatologie
     if horizon_days > 16:
         last_fc_date = df_forecast['ds'].max()
         extra_dates  = pd.date_range(
@@ -311,23 +270,17 @@ def get_temperature_forecast(horizon_days: int = 7,
     return df_forecast
 
 
-# ════════════════════════════════════════════════════════════════════════════════
-# Validation des données : évite le bug des -5.6°C
-# ════════════════════════════════════════════════════════════════════════════════
+# Validation des données
 
 def validate_temperature(df: pd.DataFrame, name: str = 'temp') -> None:
     """
     Vérifie la cohérence d'un DataFrame de températures.
-    Lève une ValueError si les données semblent corrompues.
-
-    Checks :
-        - Pas de valeurs constantes (bug de ffill sur NaN)
-        - Plage physiquement plausible pour la France
-        - Pas trop de NaN
+    Lève une ValueError si les données semblent corrompues (valeurs constantes,
+    hors plage physique France, ou NaN).
     """
     issues = []
 
-    # 1. Valeurs constantes → signe d'un ffill sur NaN
+    # Valeurs constantes → signe d'un ffill sur NaN
     for col in ['temp', 'temp_min', 'temp_max']:
         if col in df.columns:
             n_unique = df[col].nunique()
@@ -337,7 +290,7 @@ def validate_temperature(df: pd.DataFrame, name: str = 'temp') -> None:
                     f"→ probablement corrompu (bug ffill ?)"
                 )
 
-    # 2. Plage physique : France métropolitaine [-20°C, +45°C]
+    # Plage physique : France métropolitaine [-20°C, +45°C]
     for col in ['temp', 'temp_min', 'temp_max']:
         if col in df.columns:
             mn, mx = df[col].min(), df[col].max()
@@ -346,7 +299,6 @@ def validate_temperature(df: pd.DataFrame, name: str = 'temp') -> None:
                     f"⚠️  {col} : hors plage physique France [{mn:.1f}, {mx:.1f}]°C"
                 )
 
-    # 3. NaN
     n_nan = df[['temp','temp_min','temp_max']].isna().sum().sum()
     if n_nan > 0:
         issues.append(f"⚠️  {n_nan} NaN dans les températures")
@@ -361,23 +313,12 @@ def validate_temperature(df: pd.DataFrame, name: str = 'temp') -> None:
 
 def build_df_model(df_daily: pd.DataFrame,
                    df_temp: pd.DataFrame) -> pd.DataFrame:
-    """
-    Fusionne consommation + température et valide le résultat.
-
-    Args:
-        df_daily : [ds, y, total_GWh]
-        df_temp  : [ds, temp, temp_min, temp_max]
-
-    Returns:
-        DataFrame fusionné et validé
-    """
+    """Fusionne consommation [ds, y] et température [ds, temp*], interpole les trous."""
     df = df_daily.merge(df_temp, on='ds', how='left')
 
-    # Interpolation sécurisée
     for col in ['temp', 'temp_min', 'temp_max']:
         df[col] = df[col].interpolate(method='linear')
 
-    # Validation obligatoire
     validate_temperature(df, name='df_model')
 
     logger.info(f"df_model : {df['ds'].min().date()} → {df['ds'].max().date()} "
@@ -385,20 +326,15 @@ def build_df_model(df_daily: pd.DataFrame,
     return df
 
 
-# ════════════════════════════════════════════════════════════════════════════════
 # Entrée principale pour test rapide
-# ════════════════════════════════════════════════════════════════════════════════
-
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
 
-    # Test : températures pondérées
     print("Test get_temperature_weighted...")
     df_temp = get_temperature_weighted('2025-01-01', '2025-01-07')
     validate_temperature(df_temp, 'test')
     print(df_temp)
 
-    # Test : prévisions
     print("\nTest get_temperature_forecast...")
     df_fc = get_temperature_forecast(horizon_days=7)
     validate_temperature(df_fc, 'forecast')

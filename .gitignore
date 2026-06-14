@@ -1,16 +1,16 @@
-# ── Données (volumineuses ou confidentielles) ─────────────────────────────────
+# Données (volumineuses ou confidentielles)
 data/
 !data/.gitkeep
 
-# ── MLflow ────────────────────────────────────────────────────────────────────
+# MLflow
 mlruns/
 mlartifacts/
 mlflow.db
 
-# ── Logs ──────────────────────────────────────────────────────────────────────
+# Logs
 logs/
 
-# ── Python ────────────────────────────────────────────────────────────────────
+# Python
 __pycache__/
 *.py[cod]
 *.egg-info/
@@ -18,21 +18,21 @@ dist/
 build/
 .eggs/
 
-# ── Environnements ────────────────────────────────────────────────────────────
+# Environnements
 .env
 .venv/
 venv/
 env/
 
-# ── Jupyter ───────────────────────────────────────────────────────────────────
+# Jupyter
 .ipynb_checkpoints/
 *.ipynb_checkpoints
 
-# ── OS ────────────────────────────────────────────────────────────────────────
+# OS
 .DS_Store
 Thumbs.db
 
-# ── IDE ───────────────────────────────────────────────────────────────────────
+# IDE
 .vscode/
 .idea/
 *.swp
