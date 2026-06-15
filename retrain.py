@@ -35,6 +35,12 @@ logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s %(levelname)s %(message)s')
 logger = logging.getLogger(__name__)
 
+# Supprime les FutureWarnings MLflow sur les stages dépréciés (migration aliases prévue)
+warnings.filterwarnings('ignore', category=FutureWarning, module='mlflow')
+# Supprime les warnings de logging MLflow sur artifact_path déprécié
+logging.getLogger('mlflow.models.model').setLevel(logging.ERROR)
+logging.getLogger('mlflow.tracking.client').setLevel(logging.ERROR)
+
 # Configuration
 DATA_DIR        = Path('data')
 MLFLOW_DB       = 'sqlite:///mlflow.db'
