@@ -7,7 +7,8 @@ optuna>=3.4.0         # optimisation bayésienne des hyperparamètres
 # Données
 pandas>=2.0.0
 numpy>=1.26.0
-requests>=2.31.0      # appels Open-Meteo API
+requests>=2.31.0      # appels Open-Meteo + RTE API
+python-dotenv>=1.0.0  # lecture credentials .env
 
 # Visualisation
 matplotlib>=3.8.0

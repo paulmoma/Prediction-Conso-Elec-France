@@ -27,7 +27,7 @@ from sklearn.metrics import mean_absolute_percentage_error, mean_absolute_error
 
 from src.data import (get_temperature_weighted, get_temperature_forecast,
                        build_df_model, validate_temperature, POINTS_RURAUX,
-                       load_rte_daily)
+                       load_rte_complete)
 from src.features import (make_all_features, BEST_PARAMS_7J, BEST_PARAMS_30J)
 from src.model import train, predict
 
@@ -51,10 +51,12 @@ OVERFIT_GAP_MAX = 0.40
 # Noms dans le Model Registry
 MODEL_NAMES = {'7j': 'prophet_7j', '30j': 'prophet_30j'}
 
-# Valeurs CV Optuna de référence (12 folds) : à mettre à jour après re-optimisation
+# Baseline MAPE de référence pour le test d'overfitting (Mann-Whitney).
+# Valeurs Optuna CV biaisées par sélection → remplacées par les holdouts observés
+# en production (estimation non biaisée de la performance réelle).
 MAPE_CV_FOLDS = {
-    '7j' : [2.17] * 12,
-    '30j': [2.37] * 12,
+    '7j' : [3.09] * 12,
+    '30j': [2.78] * 12,
 }
 
 
@@ -166,15 +168,9 @@ def run(dry_run: bool = False):
     )
     validate_temperature(df_temp_hist, 'hist')
 
-    # 2. Données consommation RTE
+    # 2. Données consommation RTE (XLS + extension API, même source que run_weekly)
     logger.info("Chargement consommation RTE...")
-    rte_files = sorted(DATA_DIR.glob('conso_mix_RTE_*.xls'))
-    if not rte_files:
-        raise FileNotFoundError(
-            "Aucun fichier conso_mix_RTE_*.xls dans data/ : "
-            "télécharger depuis https://www.rte-france.com/eco2mix"
-        )
-    df_daily = load_rte_daily([str(f) for f in rte_files])
+    df_daily = load_rte_complete(DATA_DIR)
 
     # 3. Fusion + feature engineering
     df_model = build_df_model(df_daily, df_temp_hist)

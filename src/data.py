@@ -5,10 +5,12 @@ Chargement, parsing et validation des données RTE + Open-Meteo.
 
 import os
 import re
+import base64
 import logging
 import requests
 import pandas as pd
 import numpy as np
+from datetime import date, timedelta
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -95,22 +97,105 @@ def load_rte_daily(filepaths: list[str]) -> pd.DataFrame:
     return df_daily
 
 
+def load_rte_complete(data_dir: Path = DATA_DIR) -> pd.DataFrame:
+    """
+    Source unique de données RTE. Utilise rte_clean.csv comme data lake local :
+    - Si le fichier existe et est à jour : chargement direct (< 0.1s, aucun appel API).
+    - Si le fichier est en retard : appel API uniquement pour les jours manquants,
+      puis mise à jour du fichier.
+    - Si le fichier est absent : construction initiale depuis les XLS + API,
+      puis sauvegarde. Les XLS ne sont plus re-parsés par la suite.
+    Retourne [ds, y (MW moyen), total_GWh].
+    """
+    clean_path = data_dir / 'rte_clean.csv'
+    yesterday  = date.today() - timedelta(days=1)
+
+    if clean_path.exists():
+        df_rte    = pd.read_csv(clean_path, parse_dates=['ds'])
+        last_date = df_rte['ds'].max().date()
+
+        if last_date >= yesterday:
+            logger.info(f"RTE : rte_clean.csv à jour ({last_date})")
+            return df_rte
+
+        # Mise à jour incrémentale
+        start_api = str(last_date + timedelta(days=1))
+        logger.info(f"RTE : mise à jour {start_api} → {yesterday}")
+        try:
+            df_api = download_rte_daily(start=start_api, end=str(yesterday),
+                                         cache_dir=data_dir)
+            if not df_api.empty:
+                df_rte = (pd.concat([df_rte, df_api])
+                          .drop_duplicates('ds', keep='last')
+                          .sort_values('ds')
+                          .reset_index(drop=True))
+                df_rte.to_csv(clean_path, index=False)
+                logger.info(f"RTE : rte_clean.csv mis à jour → {df_rte['ds'].max().date()}")
+        except Exception as e:
+            logger.warning(f"API RTE indisponible, données locales utilisées : {e}")
+        return df_rte
+
+    # Premier run : construction depuis les XLS + API
+    logger.info("RTE : construction initiale de rte_clean.csv depuis les XLS...")
+    rte_files = sorted(data_dir.glob('conso_mix_RTE_*.xls'))
+    if not rte_files:
+        raise FileNotFoundError(
+            "Aucun fichier conso_mix_RTE_*.xls dans data/ : "
+            "télécharger depuis https://www.rte-france.com/eco2mix"
+        )
+    df_rte = load_rte_daily([str(f) for f in rte_files])
+
+    last_xls_date = df_rte['ds'].max().date()
+    if last_xls_date < yesterday:
+        try:
+            df_api = download_rte_daily(
+                start=str(last_xls_date + timedelta(days=1)),
+                end=str(yesterday), cache_dir=data_dir
+            )
+            if not df_api.empty:
+                df_rte = (pd.concat([df_rte, df_api])
+                          .drop_duplicates('ds', keep='last')
+                          .sort_values('ds')
+                          .reset_index(drop=True))
+        except Exception as e:
+            logger.warning(f"API RTE indisponible lors de l'initialisation : {e}")
+
+    df_rte.to_csv(clean_path, index=False)
+    logger.info(f"RTE : rte_clean.csv créé — {len(df_rte)} jours "
+                f"({df_rte['ds'].min().date()} → {df_rte['ds'].max().date()})")
+    return df_rte
+
+
 # Open-Meteo : Températures
 
 def _fetch_open_meteo(lat: float, lon: float,
                       start: str, end: str,
-                      timeout: int = 15) -> pd.DataFrame:
+                      timeout: int = 45,
+                      retries: int = 3) -> pd.DataFrame:
     """Appel bas niveau à l'API archive Open-Meteo."""
-    r = requests.get(
-        'https://archive-api.open-meteo.com/v1/archive',
-        params={
-            'latitude'  : lat, 'longitude': lon,
-            'start_date': start, 'end_date': end,
-            'daily'     : 'temperature_2m_mean,temperature_2m_min,temperature_2m_max',
-            'timezone'  : 'Europe/Paris',
-        },
-        timeout=timeout
-    ).json()
+    import time
+    last_err = None
+    for attempt in range(retries):
+        try:
+            r = requests.get(
+                'https://archive-api.open-meteo.com/v1/archive',
+                params={
+                    'latitude'  : lat, 'longitude': lon,
+                    'start_date': start, 'end_date': end,
+                    'daily'     : 'temperature_2m_mean,temperature_2m_min,temperature_2m_max',
+                    'timezone'  : 'Europe/Paris',
+                },
+                timeout=timeout
+            ).json()
+            break
+        except Exception as e:
+            last_err = e
+            if attempt < retries - 1:
+                wait = 5 * (attempt + 1)
+                logger.warning(f"Open-Meteo archive timeout (tentative {attempt+1}/{retries}), retry dans {wait}s...")
+                time.sleep(wait)
+    else:
+        raise ConnectionError(f"Open-Meteo archive inaccessible après {retries} tentatives : {last_err}")
 
     if 'daily' not in r:
         raise ConnectionError(f"Open-Meteo archive error : {r}")
@@ -268,6 +353,144 @@ def get_temperature_forecast(horizon_days: int = 7,
         logger.info(f"Température J+17 a J+{horizon_days} : moyenne climatologique")
 
     return df_forecast
+
+
+# API RTE : Consommation temps réel
+
+def _rte_get_token(timeout: int = 10) -> str:
+    """Obtient un token OAuth2 RTE depuis RTE_CLIENT_ID / RTE_CLIENT_SECRET (.env)."""
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+    except ImportError:
+        pass
+    client_id     = os.environ.get('RTE_CLIENT_ID', '')
+    client_secret = os.environ.get('RTE_CLIENT_SECRET', '')
+    if not client_id or not client_secret:
+        raise EnvironmentError(
+            "Variables RTE_CLIENT_ID et RTE_CLIENT_SECRET requises "
+            "(fichier .env à la racine du projet)"
+        )
+    credentials = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
+    r = requests.post(
+        'https://digital.iservices.rte-france.com/token/oauth/',
+        headers={
+            'Authorization': f'Basic {credentials}',
+            'Content-Type' : 'application/x-www-form-urlencoded',
+        },
+        timeout=timeout
+    )
+    r.raise_for_status()
+    return r.json()['access_token']
+
+
+def _paris_offset(date_str: str) -> str:
+    """Retourne le décalage UTC de Paris pour une date donnée (+01:00 CET ou +02:00 CEST)."""
+    ts     = pd.Timestamp(date_str).tz_localize('Europe/Paris')
+    hours  = int(ts.utcoffset().total_seconds() / 3600)
+    return f"+{hours:02d}:00"
+
+
+def _rte_fetch_realised(token: str, start: str, end: str,
+                         timeout: int = 30) -> list:
+    """
+    Récupère la consommation réalisée (REALISED) via short_term RTE.
+    Disponible depuis 2012, max 186 jours par appel, pas 15 min, valeurs en MW.
+    start/end : dates YYYY-MM-DD (incluses).
+    """
+    r = requests.get(
+        'https://digital.iservices.rte-france.com/open_api/consumption/v1/short_term',
+        headers={'Authorization': f'Bearer {token}'},
+        params={
+            'type'      : 'REALISED',
+            'start_date': f'{start}T00:00:00{_paris_offset(start)}',
+            'end_date'  : f'{end}T23:59:59{_paris_offset(end)}',
+        },
+        timeout=timeout
+    )
+    r.raise_for_status()
+    records = []
+    for serie in r.json().get('short_term', []):
+        if serie.get('type') == 'REALISED':
+            records.extend(serie.get('values', []))
+    return records
+
+
+def download_rte_daily(start: str, end: str,
+                        cache_dir: Path = DATA_DIR,
+                        chunk_days: int = 180) -> pd.DataFrame:
+    """
+    Télécharge la consommation journalière RTE via short_term/REALISED.
+    Retourne [ds, y (MW moyen), total_GWh]. Met à jour rte_api_cache.csv.
+    Ne télécharge que les jours absents du cache.
+    Données disponibles depuis 2012, max 186 jours par appel.
+    """
+    cache_file   = cache_dir / 'rte_api_cache.csv'
+    df_cached    = pd.DataFrame()
+    actual_start = start
+
+    if cache_file.exists():
+        df_cached = pd.read_csv(cache_file, parse_dates=['ds'])
+        if not df_cached.empty:
+            cache_max = df_cached['ds'].max().date()
+            if cache_max >= pd.Timestamp(end).date():
+                logger.info(f"RTE API : cache à jour jusqu'au {cache_max}")
+                return df_cached[
+                    (df_cached['ds'] >= start) & (df_cached['ds'] <= end)
+                ].reset_index(drop=True)
+            actual_start = str(cache_max + timedelta(days=1))
+            logger.info(f"RTE API : cache jusqu'au {cache_max}, "
+                        f"téléchargement depuis {actual_start}")
+
+    token = _rte_get_token()
+    logger.info("Token RTE obtenu")
+
+    all_records = []
+    current = pd.Timestamp(actual_start)
+    end_ts  = pd.Timestamp(end)
+    while current <= end_ts:
+        chunk_end = min(current + pd.Timedelta(days=chunk_days - 1), end_ts)
+        logger.info(f"  RTE API short_term/REALISED : {current.date()} → {chunk_end.date()}")
+        records = _rte_fetch_realised(token, str(current.date()), str(chunk_end.date()))
+        all_records.extend(records)
+        current = chunk_end + pd.Timedelta(days=1)
+
+    if not all_records:
+        logger.warning("RTE API : aucune donnée reçue pour cette période")
+        return df_cached[
+            (df_cached['ds'] >= start) & (df_cached['ds'] <= end)
+        ].reset_index(drop=True) if not df_cached.empty else pd.DataFrame()
+
+    # Parse 15-min MW → journalier (heure locale Paris pour éviter les bugs DST)
+    rows = []
+    for rec in all_records:
+        ts  = pd.Timestamp(rec['start_date']).tz_convert('Europe/Paris').tz_localize(None).normalize()
+        val = rec.get('value')
+        if val is not None:
+            rows.append({'ds': ts, 'y': float(val)})
+
+    df_15min = pd.DataFrame(rows).dropna()
+    counts   = df_15min.groupby('ds')['y'].count()
+    jours_valides = counts[counts >= 90].index
+
+    df_new = df_15min.groupby('ds').agg(
+        y        =('y', 'mean'),
+        total_GWh=('y', lambda x: x.sum() * 0.25 / 1000)
+    ).reset_index()
+    df_new = df_new[df_new['ds'].isin(jours_valides)].reset_index(drop=True)
+
+    df_full = (pd.concat([df_cached, df_new])
+               .drop_duplicates('ds', keep='last')
+               .sort_values('ds')
+               .reset_index(drop=True)) if not df_cached.empty else df_new
+
+    df_full.to_csv(cache_file, index=False)
+    logger.info(f"RTE API : {len(df_new)} nouveaux jours → {cache_file.name} "
+                f"({len(df_full)} total)")
+
+    return df_full[
+        (df_full['ds'] >= start) & (df_full['ds'] <= end)
+    ].reset_index(drop=True)
 
 
 # Validation des données

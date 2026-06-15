@@ -23,7 +23,7 @@ from sklearn.metrics import mean_absolute_percentage_error, mean_absolute_error
 
 from src.data import (get_temperature_weighted, get_temperature_forecast,
                        build_df_model, validate_temperature, POINTS_RURAUX,
-                       load_rte_daily)
+                       load_rte_complete)
 from src.features import make_all_features
 from src.model import predict, train
 import retrain as retrain_module
@@ -192,15 +192,9 @@ def main():
 
     with mlflow.start_run(run_name=f"weekly_{today}") as run_ctx:
 
-        # Données RTE
+        # Données RTE : XLS historiques + extension API (via load_rte_complete)
         logger.info("Chargement données RTE...")
-        rte_files = sorted(DATA_DIR.glob('conso_mix_RTE_*.xls'))
-        if not rte_files:
-            raise FileNotFoundError(
-                "Aucun fichier conso_mix_RTE_*.xls dans data/ : "
-                "télécharger depuis https://www.rte-france.com/eco2mix"
-            )
-        df_rte = load_rte_daily([str(f) for f in rte_files])
+        df_rte = load_rte_complete(DATA_DIR)
 
         # Étape 1 : validation rétrospective
         logger.info("── ÉTAPE 1 : Validation rétrospective ──")
