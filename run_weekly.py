@@ -121,6 +121,24 @@ def validate_past_forecasts(df_rte: pd.DataFrame) -> dict:
 
 # Étape 2 : Prévisions avec le modèle Production
 
+def _log_temperature_forecast(df_temp_fc: pd.DataFrame, run_date: str) -> None:
+    """Ajoute les prévisions de températures au journal historique temp_forecast_log.csv."""
+    log_path = DATA_DIR / 'temp_forecast_log.csv'
+
+    df_log = df_temp_fc[['ds', 'temp', 'temp_min', 'temp_max', 'source']].copy()
+    df_log.insert(0, 'run_date', run_date)
+    df_log['ds'] = df_log['ds'].dt.strftime('%Y-%m-%d')
+
+    if log_path.exists():
+        df_existing = pd.read_csv(log_path)
+        df_existing = df_existing[df_existing['run_date'] != run_date]
+        df_log = pd.concat([df_existing, df_log]).reset_index(drop=True)
+
+    df_log.to_csv(log_path, index=False)
+    logger.info(f"Prévisions températures journalisées → {log_path.name} "
+                f"({len(df_temp_fc)} jours, run_date={run_date})")
+
+
 def build_feature_dfs(df_rte: pd.DataFrame,
                        today: str) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Construit les DataFrames features 7j et 30j, températures historiques + prévisions."""
@@ -132,13 +150,17 @@ def build_feature_dfs(df_rte: pd.DataFrame,
 
     df_temp_fc = get_temperature_forecast(horizon_days=30, cache_dir=DATA_DIR)
     df_temp_fc.to_csv(DATA_DIR / 'temperature_forecast.csv', index=False)
+    _log_temperature_forecast(df_temp_fc, today)
+
+    # Enlève la colonne source avant le feature engineering (non numérique)
+    df_temp_fc_model = df_temp_fc.drop(columns=['source'])
 
     df_model = build_df_model(df_rte, df_temp_hist)
 
     # DataFrame des jours futurs (sans y)
     df_future_temp = build_df_model(
-        pd.DataFrame({'ds': df_temp_fc['ds'], 'y': np.nan}),
-        df_temp_fc
+        pd.DataFrame({'ds': df_temp_fc_model['ds'], 'y': np.nan}),
+        df_temp_fc_model
     )
 
     df_7j  = make_all_features(df_model, model='7j')

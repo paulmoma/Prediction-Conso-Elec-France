@@ -70,10 +70,13 @@ def rolling_weekly_mape(df_real: pd.DataFrame,
     weeks   = pd.date_range(start, end, freq='W-MON')
     results = []
     for w in weeks:
-        w_end = w + timedelta(days=6)
-        real  = df_real[df_real['ds'].between(str(w), str(w_end))]['y'].values
-        pred  = fc[fc['ds'].between(str(w), str(w_end))]['yhat'].values
-        if len(real) < 5 or np.isnan(real).any():
+        w_end  = w + timedelta(days=6)
+        df_w   = (df_real[df_real['ds'].between(str(w), str(w_end))][['ds', 'y']]
+                  .merge(fc[['ds', 'yhat']], on='ds', how='inner')
+                  .dropna())
+        real   = df_w['y'].values
+        pred   = df_w['yhat'].values
+        if len(real) < 5:
             continue
         mape = mean_absolute_percentage_error(real, pred) * 100
         mae  = mean_absolute_error(real, pred)

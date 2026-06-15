@@ -335,6 +335,7 @@ def get_temperature_forecast(horizon_days: int = 7,
             dfs[nom][col].values * info['poids']
             for nom, info in points.items()
         ) / sum_poids
+    df_forecast['source'] = 'forecast'
 
     if horizon_days > 16:
         last_fc_date = df_forecast['ds'].max()
@@ -349,6 +350,9 @@ def get_temperature_forecast(horizon_days: int = 7,
             df_clim = pd.DataFrame({'ds': extra_dates})
             for col in ['temp', 'temp_min', 'temp_max']:
                 df_clim[col] = df_forecast[col].iloc[-1]
+            df_clim['source'] = 'ffill'
+        else:
+            df_clim['source'] = 'climatology'
         df_forecast = pd.concat([df_forecast, df_clim], ignore_index=True)
         logger.info(f"Température J+17 a J+{horizon_days} : moyenne climatologique")
 
@@ -451,8 +455,11 @@ def download_rte_daily(start: str, end: str,
     while current <= end_ts:
         chunk_end = min(current + pd.Timedelta(days=chunk_days - 1), end_ts)
         logger.info(f"  RTE API short_term/REALISED : {current.date()} → {chunk_end.date()}")
-        records = _rte_fetch_realised(token, str(current.date()), str(chunk_end.date()))
-        all_records.extend(records)
+        try:
+            records = _rte_fetch_realised(token, str(current.date()), str(chunk_end.date()))
+            all_records.extend(records)
+        except Exception as e:
+            logger.warning(f"  RTE API : échec chunk {current.date()}→{chunk_end.date()} : {e}")
         current = chunk_end + pd.Timedelta(days=1)
 
     if not all_records:
