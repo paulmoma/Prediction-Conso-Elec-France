@@ -1,45 +1,35 @@
 # Prévision consommation électrique France, modèle Prophet
 
-Modèle de prévision de la consommation électrique nationale française
-à horizons **7 jours** et **30 jours**, construit uniquement avec des données
-publiques gratuites.
+Modèle de prévision de la consommation électrique nationale française à horizons **7 jours** et **30 jours**, construit uniquement avec des données publiques gratuites.
 
-> Projet initialisé dans le cadre d'une formation Data Engineer (Campus Numérique in the Alps) : prédiction de séries temporelles, déploiement de modèles de Machine Learning en production. 
+> Projet initialisé dans le cadre d'une formation Data Engineer (Campus Numérique in the Alps) : prédiction de séries temporelles, déploiement de modèles de Machine Learning en production.
+
+![Prévisions 7j sur 5 semaines représentatives de 2026](figures/readme_preview.png)
 
 ---
 
 ## Résultats
 
-
-| Modèle | MAPE CV (Optuna) | MAPE test (2026) |
-|--------|-----------------|------|
-| **Prophet 7j** | 2.17%[1] | **2.90%**[2]|
-| **Prophet 30j** | 2.37%[1] | **2.53%**[2] |
+| Modèle | MAPE holdout (8 sem.) | MAPE test (2026) |
+|--------|----------------------|------------------|
+| **Prophet 7j** | **3.09%**[1] | **2.93%**[2] |
+| **Prophet 30j** | **2.78%**[1] | **2.64%**[2] |
 | Naïf saisonnier | - | 8.9%[3] |
 | TimesFM zero-shot (200M) | - | 8.3%[3] |
 
-[1] MAPE obtenue par cross-validation : retient le meilleur résultat parmi
-100 combinaisons d'hyperparamètres testées par Optuna (recherche bayésienne,
-plus efficace qu'un random search). Cette valeur est optimiste par rapport
-à la MAPE de production (biais de sélection sur 100 trials), sans toutefois
-suggérer d'overfitting.
+[1] MAPE holdout : évaluation sur les 8 dernières semaines avant chaque réentraînement. Valeur non biaisée par la sélection des hyperparamètres. Un test Mann-Whitney vérifie l'absence d'overfitting à chaque retrain.
 
-[2] MAPE de production : évaluation sur données 2026 jamais vues. 7j : rolling
-hebdomadaire avec réentraînement (22 semaines). 30j : prévision continue de
-5 mois sans réentraînement.
+[2] MAPE de production : rolling hebdomadaire sur données 2026 jamais vues, avec réentraînement automatique bi-hebdomadaire.
 
-[3] MAPE sur une seule fenêtre de test de 30 jours, protocole moins rigoureux
-que pour Prophet, à considérer comme indicatif. L'écart important avec Prophet
-(même peu optimisé, ~4% dès l'ajout de la température brute) a motivé la
-poursuite avec Prophet plutôt que TimesFM.
+[3] MAPE sur une seule fenêtre de test de 30 jours, protocole moins rigoureux que pour Prophet, à considérer comme indicatif. L'écart important avec Prophet (même peu optimisé, ~4% dès l'ajout de la température brute) a motivé la poursuite avec Prophet plutôt que TimesFM.
 
 ---
 
 ## Méthodologie
 
 ### Données
-- **Consommation** : [RTE eco2mix](https://www.rte-france.com/eco2mix) - granularité 15 min → agrégée en journalier
-- **Météo** : [Open-Meteo](https://open-meteo.com) Archive API - temp mean/min/max pour les prévisions jusqu'à J+16, moyennes des données des 3 dernières années ensuite.
+- **Consommation** : [RTE eco2mix](https://www.services-rte.com/fr/telechargez-les-donnees-publiees-par-rte.html) pour l'historique ("Courbe de consommation", foramt XLS, 15 minutes, agrégées en journalier), complété automatiquement par l'[API RTE Open Data](https://data.rte-france.com) pour les données récentes. Un fichier `rte_clean.csv` sert de data lake local.
+- **Météo** : [Open-Meteo](https://open-meteo.com) — Archive API pour l'historique, Forecast API pour J+1 à J+16, moyenne climatologique (3 ans glissants) pour J+17 à J+30.
 
 ### Représentation spatiale de la température
 4 points ruraux pondérés (hors îlots de chaleur urbains qui biaisent le modèle) :
@@ -53,31 +43,9 @@ poursuite avec Prophet plutôt que TimesFM.
 
 La pondération a été optimisée par cross-validation, aucune combinaison testée n'a fait mieux.
 
-
 ### Optimisation
 - Hyperparamètres optimisés par **Optuna TPE** (optimisation bayésienne, 100 trials)
 - Cross-validation Prophet : `initial='730 days'`, `period='30 days'`
-
----
-
-## Installation
-
-```bash
-git clone https://github.com/paulmoma/Prediction-Conso-Elec-France
-cd Prediction-Conso-Elec-France
-
-conda create -n prophet python=3.11
-conda activate prophet
-pip install -r requirements.txt
-```
-
-### Données (non incluses dans le repo)
-
-**Consommation RTE** : télécharger les fichiers `conso_mix_RTE_YYYY.xls`
-sur [eco2mix RTE](https://www.rte-france.com/eco2mix/telecharger-les-indicateurs)
-et les placer dans `data/`.
-
-**Températures** : téléchargées automatiquement via Open-Meteo au premier run.
 
 ---
 
@@ -139,12 +107,12 @@ bash cron_setup.sh
 
 | Piste | Résultat | Raison |
 |-------|---------|--------|
-| 8 villes pondérées | +2 pts MAPE | Biais îlots de chaleur urbains |
+| 8 grandes villes pondérées | +2 pts MAPE | Biais îlots de chaleur urbains |
 | Fenêtre 2007-2025 | 5.93% | Concept drift (COVID, crise énergie 2022) |
 | Poids asymétriques hiver/été | 2.47% | Pas mieux que symétrique |
 | Vacances scolaires (30j) | +0.002 pts | Signal noyé sur 30 jours |
 | Saisonnalité conditionnelle | 2.19% | Complexité sans gain |
-| Ancrage de prévision | −0.06% | 3/12 folds améliorés seulement |
+| Ancrage de prévision | −0.06% | 3/12 prévisions améliorées seulement |
 | TimesFM zero-shot | 8.3% | Battu par feature engineering |
 
 ---
