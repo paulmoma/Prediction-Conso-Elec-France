@@ -29,7 +29,7 @@ Modèle de prévision de la consommation électrique nationale française à hor
 
 ### Données
 - **Consommation** : [RTE eco2mix](https://www.services-rte.com/fr/telechargez-les-donnees-publiees-par-rte.html) pour l'historique ("Courbe de consommation", foramt XLS, 15 minutes, agrégées en journalier), complété automatiquement par l'[API RTE Open Data](https://data.rte-france.com) pour les données récentes. Un fichier `rte_clean.csv` sert de data lake local.
-- **Météo** : [Open-Meteo](https://open-meteo.com) — Archive API pour l'historique, Forecast API pour J+1 à J+16, moyenne climatologique (3 ans glissants) pour J+17 à J+30.
+- **Météo** : [Open-Meteo](https://open-meteo.com) : Archive API pour l'historique, Forecast API pour J+1 à J+16, moyenne climatologique (3 ans glissants) pour J+17 à J+30.
 
 ### Représentation spatiale de la température
 4 points ruraux pondérés (hors îlots de chaleur urbains qui biaisent le modèle) :
@@ -46,6 +46,10 @@ La pondération a été optimisée par cross-validation, aucune combinaison test
 ### Optimisation
 - Hyperparamètres optimisés par **Optuna TPE** (optimisation bayésienne, 100 trials)
 - Cross-validation Prophet : `initial='730 days'`, `period='30 days'`
+
+![Importance des paramètres Optuna](figures/optuna_importance.png)
+
+Sur les 100 trials, `heat_base_mean` et `fourier_yearly` sont les paramètres qui font le plus varier la MAPE. Les valeurs optimales sont dans `src/features.py`.
 
 ---
 
