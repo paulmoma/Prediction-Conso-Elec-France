@@ -35,10 +35,10 @@ def load_forecast(model: str) -> pd.DataFrame:
 
 @st.cache_data(ttl=3600)
 def load_rte_actual(days: int = 180) -> pd.DataFrame:
-    """Charge le réalisé RTE depuis les .xls (fallback sur rte_daily*.csv)."""
-    csv_paths = sorted(DATA_DIR.glob('rte_daily*.csv'))
-    if csv_paths:
-        df = pd.concat([pd.read_csv(p, parse_dates=['ds']) for p in csv_paths])
+    """Charge le réalisé RTE depuis rte_clean.csv (data lake mis à jour par run_weekly)."""
+    clean_path = DATA_DIR / 'rte_clean.csv'
+    if clean_path.exists():
+        df = pd.read_csv(clean_path, parse_dates=['ds'])
         df = df.sort_values('ds').drop_duplicates('ds')
         df['y'] /= 1e3
         cutoff = pd.Timestamp(date.today() - timedelta(days=days))

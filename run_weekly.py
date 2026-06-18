@@ -191,9 +191,10 @@ def load_production_models() -> tuple:
 def save_dated_forecasts(fc_7j: pd.DataFrame, fc_30j: pd.DataFrame) -> None:
     """Sauvegarde les prévisions avec horodatage + version latest pour le dashboard."""
     today = str(date.today())
+    today_ts = pd.Timestamp(today)
     for model, fc, h in [('7j', fc_7j, 7), ('30j', fc_30j, 30)]:
         cols        = ['ds', 'yhat', 'yhat_lower', 'yhat_upper']
-        out         = fc.tail(h)[cols]
+        out         = fc[fc['ds'] >= today_ts].head(h)[cols]
         dated_path  = FORECAST_DIR / f'forecast_{model}_{today}.csv'
         latest_path = DATA_DIR     / f'forecast_{model}_latest.csv'
         out.to_csv(dated_path,  index=False)

@@ -118,8 +118,8 @@ def load_rte_complete(data_dir: Path = DATA_DIR) -> pd.DataFrame:
             logger.info(f"RTE : rte_clean.csv à jour ({last_date})")
             return df_rte
 
-        # Mise à jour incrémentale
-        start_api = str(last_date + timedelta(days=1))
+        # Mise à jour incrémentale (fenêtre min 2 jours exigée par short_term API)
+        start_api = str(last_date)
         logger.info(f"RTE : mise à jour {start_api} → {yesterday}")
         try:
             df_api = download_rte_daily(start=start_api, end=str(yesterday),
