@@ -147,6 +147,7 @@ def build_feature_dfs(df_rte: pd.DataFrame,
         points=POINTS_RURAUX, cache_dir=DATA_DIR
     )
     validate_temperature(df_temp_hist, 'hist')
+    df_temp_hist.to_csv(DATA_DIR / 'temp_history.csv', index=False)
 
     df_temp_fc = get_temperature_forecast(horizon_days=30, cache_dir=DATA_DIR)
     df_temp_fc.to_csv(DATA_DIR / 'temperature_forecast.csv', index=False)

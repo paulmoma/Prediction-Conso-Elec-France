@@ -28,7 +28,9 @@ fi
 
 # Push des données mises à jour vers GitHub pour Streamlit Cloud
 git add data/rte_clean.csv data/forecast_7j_latest.csv data/forecast_30j_latest.csv \
-        data/validation_log.csv data/temperature_forecast.csv data/forecasts/
+        data/validation_log.csv data/temperature_forecast.csv \
+        data/temp_forecast_log.csv data/temp_history.csv \
+        data/forecasts/
 if ! git diff --cached --quiet; then
     git commit -m "data update $(date +%Y-%m-%d)" >> "$LOG" 2>&1
     git push >> "$LOG" 2>&1
