@@ -6,6 +6,9 @@ data/*
 !data/forecast_30j_latest.csv
 !data/validation_log.csv
 !data/temperature_forecast.csv
+!data/forecasts/
+data/forecasts/*
+!data/forecasts/*.csv
 
 # MLflow
 mlruns/
