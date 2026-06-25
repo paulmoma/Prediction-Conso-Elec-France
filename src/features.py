@@ -9,7 +9,6 @@ Deux modèles :
 
 import numpy as np
 import pandas as pd
-from pathlib import Path
 
 # Paramètres 30j (Optuna, horizon='30 days')
 BEST_PARAMS_30J = {

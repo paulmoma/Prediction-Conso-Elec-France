@@ -156,21 +156,24 @@ def build_feature_dfs(df_rte: pd.DataFrame,
     # Enlève la colonne source avant le feature engineering (non numérique)
     df_temp_fc_model = df_temp_fc.drop(columns=['source'])
 
-    df_model = build_df_model(df_rte, df_temp_hist)
-
-    # DataFrame des jours futurs (sans y)
-    df_future_temp = build_df_model(
+    df_model  = build_df_model(df_rte, df_temp_hist)
+    df_future = build_df_model(
         pd.DataFrame({'ds': df_temp_fc_model['ds'], 'y': np.nan}),
         df_temp_fc_model
     )
 
-    df_7j  = make_all_features(df_model, model='7j')
-    df_30j = make_all_features(df_model, model='30j')
+    # Série CONTINUE (historique réel + futur y=NaN) AVANT tout calcul de feature.
+    # Les lags reposent sur shift() qui compte des lignes : les jours futurs doivent
+    # avoir la bordure historique juste au-dessus d'eux, sinon shift() renvoie des NaN
+    # reboutés à tort sur les premiers jours de l'horizon (justement ceux qui comptent).
+    # Les lignes y=NaN sont ensuite écartées à l'entraînement par le .dropna() de train().
+    df_all = (pd.concat([df_model, df_future], ignore_index=True)
+              .drop_duplicates('ds', keep='first')   # garde la ligne réelle si chevauchement
+              .sort_values('ds')
+              .reset_index(drop=True))
 
-    df_7j_full  = pd.concat([df_7j,  make_all_features(df_future_temp, model='7j')]
-                             ).reset_index(drop=True)
-    df_30j_full = pd.concat([df_30j, make_all_features(df_future_temp, model='30j')]
-                             ).reset_index(drop=True)
+    df_7j_full  = make_all_features(df_all, model='7j')
+    df_30j_full = make_all_features(df_all, model='30j')
 
     return df_7j_full, df_30j_full
 
