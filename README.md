@@ -10,14 +10,14 @@ Modèle de prévision de la consommation électrique nationale française à hor
 
 ## Résultats
 
-| Modèle | MAPE holdout (8 sem.) | MAPE test (2026) |
+| Modèle | MAPE test set (8 sem.) | MAPE prod. (2026) |
 |--------|----------------------|------------------|
 | **Prophet 7j** | **3.09%**[1] | **2.93%**[2] |
 | **Prophet 30j** | **2.78%**[1] | **2.64%**[2] |
 | Naïf saisonnier | - | 8.9%[3] |
 | TimesFM zero-shot (200M) | - | 8.3%[3] |
 
-[1] MAPE holdout : évaluation sur les 8 dernières semaines avant chaque réentraînement. Valeur non biaisée par la sélection des hyperparamètres. Un test Mann-Whitney vérifie l'absence d'overfitting à chaque retrain.
+[1] MAPE test set : moyenne semaine par semaine sur les 8 semaines précédant chaque réentraînement, avec les températures **telles que prévues au moment du run** (conditions de production, cf. § *Validation et promotion*). Hyperparamètres fixés → valeur non biaisée par leur sélection.
 
 [2] MAPE de production : rolling hebdomadaire sur données 2026 jamais vues, avec réentraînement automatique bi-hebdomadaire.
 
@@ -51,6 +51,15 @@ La pondération a été optimisée par cross-validation, aucune combinaison test
 
 Sur les 100 trials, `heat_base_mean` et `fourier_yearly` sont les paramètres qui font le plus varier la MAPE. Les valeurs optimales sont dans `src/features.py`.
 
+### Validation et promotion
+À chaque réentraînement, un modèle d'évaluation est entraîné sur `[2023-01-01 → J−8 semaines]` et évalué semaine par semaine sur les 8 semaines suivantes (le *test set*). Pour rester fidèle à la production, cette évaluation utilise les températures **telles que prévues au moment du run** (journal `temp_forecast_log.csv`) là où le journal les couvre (~30 jours), et les températures réelles au-delà. La MAPE test set est donc une estimation **conservatrice** de la performance réelle.
+
+Le modèle réellement déployé n'est pas ce modèle d'évaluation : si l'évaluation passe, un nouveau modèle est réentraîné sur **100 % des données** (8 dernières semaines incluses) puis promu en Production via le MLflow Model Registry. En cas d'échec, le modèle Production en place est conservé et rien n'est enregistré.
+
+Deux critères conditionnent la promotion :
+- **Seuil absolu** : MAPE test set ≤ 5 % (filet de sécurité, toujours actif).
+- **Seuil adaptatif** : MAPE test set ≤ mean(ref) + 1,5 × std(ref), où `ref` sont les MAPE de validation production récentes (`validation_log.csv`). Le seuil se resserre automatiquement si le modèle est stable, et se desserre si la production est naturellement bruitée. Actif dès que l'historique de référence compte au moins 5 points ; en dessous, seul le seuil absolu s'applique.
+
 ---
 
 ## Usage
@@ -74,36 +83,6 @@ streamlit run app.py
 bash cron_setup.sh
 ```
 
----
-
-## Structure du projet
-
-```
-├── src/
-│   ├── data.py              # Chargement RTE + Open-Meteo, validation températures
-│   ├── features.py          # HDD/CDD/lags/pct_vacances, BEST_PARAMS_7J et 30J
-│   ├── model.py             # Build/train/predict Prophet 7j et 30j
-│   └── evaluate.py          # Métriques, plots, test overfitting Mann-Whitney
-├── retrain.py               # Réentraînement + évaluation holdout + promotion MLflow
-├── run_weekly.py            # Pipeline bi-hebdomadaire (validation + prévisions + retrain)
-├── run_if_needed.sh         # Guard idempotence pour le cron
-├── cron_setup.sh            # Configuration automatique du cron
-├── app.py                   # Dashboard Streamlit
-├── requirements.txt
-└── data/                    # Non versionné (.gitignore)
-    ├── forecasts/                        # Prévisions datées (auto-généré)
-    │   ├── forecast_7j_YYYY-MM-DD.csv
-    │   └── forecast_30j_YYYY-MM-DD.csv
-    ├── forecast_7j_latest.csv            # Dernière prévision 7j (auto-généré)
-    ├── forecast_30j_latest.csv           # Dernière prévision 30j (auto-généré)
-    ├── validation_log.csv                # Journal historique de validation (auto-généré)
-    ├── temperature_forecast.csv          # Prévisions météo J+30 pour le dashboard (auto-généré)
-    ├── conso_mix_RTE_YYYY.xls            # À télécharger depuis RTE
-    ├── temp_Alencon.csv                  # Caches Open-Meteo par point (auto-généré)
-    ├── temp_Bar_le_Duc.csv
-    ├── temp_Perigueux.csv
-    └── temp_Montelimar.csv
-```
 
 ---
 
@@ -119,8 +98,4 @@ bash cron_setup.sh
 | Ancrage de prévision | −0.06% | 3/12 prévisions améliorées seulement |
 | TimesFM zero-shot | 8.3% | Battu par feature engineering |
 
----
 
-## Licence
-
-MIT
