@@ -1,10 +1,12 @@
 # Prévision consommation électrique France, modèle Prophet
 
-Modèle de prévision de la consommation électrique nationale française à horizons **7 jours** et **30 jours**, construit uniquement avec des données publiques gratuites.
+Modèle de prévision de la consommation électrique nationale française (puissance moyenne journalière) à horizons **7 jours** et **30 jours**, construit uniquement avec des données publiques gratuites.
 
 > Projet initialisé dans le cadre d'une formation Data Engineer (Campus Numérique in the Alps) : prédiction de séries temporelles, déploiement de modèles de Machine Learning en production.
 
 ![Prévisions 7j sur 5 semaines représentatives de 2026](figures/readme_preview.png)
+
+[Affichage sur Streamlit des prédictions actuelles et confrontation des prédictions passées avec les données réalisées](https://prediction-conso-elec-france-szs2wnajdluqim2ybsxxk4.streamlit.app/)
 
 ---
 
