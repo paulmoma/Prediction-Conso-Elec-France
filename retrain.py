@@ -36,9 +36,10 @@ logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s %(levelname)s %(message)s')
 logger = logging.getLogger(__name__)
 
-# Supprime les FutureWarnings MLflow sur les stages dépréciés (migration aliases prévue)
-warnings.filterwarnings('ignore', category=FutureWarning, module='mlflow')
-# Supprime les warnings de logging MLflow sur artifact_path déprécié
+# Supprime les FutureWarnings MLflow sur les stages dépréciés (migration aliases prévue).
+# Le filtre porte sur le message car MLflow remonte le warning au call site (stacklevel=2).
+warnings.filterwarnings('ignore', category=FutureWarning,
+                        message='.*Model registry stages will be removed.*')
 logging.getLogger('mlflow.models.model').setLevel(logging.ERROR)
 logging.getLogger('mlflow.tracking.client').setLevel(logging.ERROR)
 
@@ -229,7 +230,7 @@ def _build_test_set_temps(df_temp_hist: pd.DataFrame,
     return pd.concat([df_before, df_test_set]).reset_index(drop=True)
 
 
-def run(dry_run: bool = False):
+def run(dry_run: bool = False, df_daily: pd.DataFrame = None):
     today          = str(date.today())
     test_set_start = str(date.today() - timedelta(weeks=TEST_SET_WEEKS))
     logger.info(f"{'='*60}")
@@ -246,9 +247,10 @@ def run(dry_run: bool = False):
     )
     validate_temperature(df_temp_hist, 'hist')
 
-    # 2. Données consommation RTE (XLS + extension API, même source que run_weekly)
-    logger.info("Chargement consommation RTE...")
-    df_daily = load_rte_complete(DATA_DIR)
+    # 2. Données consommation RTE — réutilise df_daily si fourni (évite un double appel API)
+    if df_daily is None:
+        logger.info("Chargement consommation RTE...")
+        df_daily = load_rte_complete(DATA_DIR)
 
     # 3. Fusion + feature engineering sur températures réelles (pour le modèle Production)
     df_model = build_df_model(df_daily, df_temp_hist)

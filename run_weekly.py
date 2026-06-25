@@ -273,7 +273,7 @@ def main():
 
     # Étape 3 : réentraînement
     logger.info("── ÉTAPE 3 : Réentraînement ──")
-    retrain_module.run()
+    retrain_module.run(df_daily=df_rte)
 
 
 if __name__ == '__main__':
