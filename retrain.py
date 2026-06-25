@@ -3,7 +3,7 @@ retrain.py
 Cycle de réentraînement avec test set 8 semaines.
 
 1. Entraîne un modèle-instrument sur [TRAIN_START → aujourd'hui - 8 semaines]
-2. Évalue sur les 8 dernières semaines (MAPE + test de dérive vs validation production)
+2. Évalue sur les 8 dernières semaines (MAPE vs seuil)
 3. Si les métriques passent → réentraîne sur 100% des données, enregistre dans
    MLflow Model Registry + promeut en Production
 4. Si échec → conserve le modèle Production actuel, run tagué 'rejected'
@@ -24,7 +24,6 @@ import mlflow
 import mlflow.prophet
 import numpy as np
 import pandas as pd
-from scipy import stats
 from sklearn.metrics import mean_absolute_percentage_error, mean_absolute_error
 
 from src.data import (get_temperature_weighted, build_df_model,
@@ -50,15 +49,13 @@ EXPERIMENT_NAME = 'EF_Retraining'
 TRAIN_START     = '2023-01-01'
 TEST_SET_WEEKS  = 8
 
-# Seuil de MAPE au-delà duquel on ne promeut pas
+# Seuil absolu de MAPE au-delà duquel on ne promeut pas (filet de sécurité)
 MAPE_MAX_PROMOTE = 5.0
 
-# Test de dérive : la perf du run (MAPE test set de) est-elle significativement pire
-# que la distribution récente des MAPE de validation observées en production ?
-DRIFT_ALPHA      = 0.05   # seuil p-value Mann-Whitney
-DRIFT_GAP_MAX    = 0.40   # écart relatif minimal pour déclencher l'alerte
-DRIFT_MIN_REF    = 5      # nb minimal de points de référence (sinon test ignoré)
-DRIFT_REF_WINDOW = 20     # nb de validations récentes servant de référence
+# Seuil adaptatif : alerte si mape_run > mean(ref) + k * std(ref)
+DRIFT_K          = 1.5
+DRIFT_MIN_REF    = 5    # nb minimal de points de référence pour activer le test
+DRIFT_REF_WINDOW = 20   # nb de validations récentes servant de référence
 
 # Noms dans le Model Registry
 MODEL_NAMES = {'7j': 'prophet_7j', '30j': 'prophet_30j'}
@@ -88,67 +85,36 @@ def rolling_weekly_mape(df_real: pd.DataFrame,
     return results
 
 
-def load_reference_mapes(model: str,
-                         data_dir: Path = DATA_DIR,
-                         window: int = DRIFT_REF_WINDOW) -> list:
-    """Distribution de référence pour le test de dérive : les MAPE de validation
-    production les plus récentes pour ce modèle. [] si journal absent/vide."""
+def load_reference_mapes(model: str, data_dir: Path = DATA_DIR) -> list:
+    """MAPE de validation production récentes pour ce modèle. [] si journal absent/vide."""
     log_path = data_dir / 'validation_log.csv'
     if not log_path.exists():
         return []
     try:
         df = pd.read_csv(log_path)
         df = df[df['model'] == model].dropna(subset=['mape'])
-        if df.empty:
-            return []
-        return df.sort_values('validation_date').tail(window)['mape'].tolist()
+        return df.sort_values('validation_date').tail(DRIFT_REF_WINDOW)['mape'].tolist()
     except Exception as e:
-        logger.warning(f"Référence dérive illisible : {e}")
+        logger.warning(f"Référence adaptative illisible : {e}")
         return []
 
 
-def test_drift(reference_mapes: list,
-               current_mapes: list,
-               alpha: float = DRIFT_ALPHA,
-               gap_threshold: float = DRIFT_GAP_MAX,
-               min_ref: int = DRIFT_MIN_REF) -> dict:
-    """Compare la MAPE du run à la distribution de référence récente (production).
-    Dérive = run significativement pire (Mann-Whitney unilatéral) ET écart relatif
-    > gap_threshold. Référence trop courte → test ignoré (pas d'alerte)."""
-    mape_run = float(np.mean(current_mapes))
-
-    if len(reference_mapes) < min_ref:
-        logger.info(f"Dérive : référence insuffisante "
-                    f"({len(reference_mapes)}/{min_ref}) → test ignoré, run={mape_run:.2f}%")
-        return {'mape_ref': None, 'mape_run': round(mape_run, 3), 'gap_pct': None,
-                'p_value': None, 'drift_alert': False, 'tested': False,
-                'n_ref': len(reference_mapes)}
-
-    mape_ref   = float(np.mean(reference_mapes))
-    gap        = (mape_run - mape_ref) / mape_ref
-    _, p_value = stats.mannwhitneyu(current_mapes, reference_mapes,
-                                    alternative='greater')
-    drift_alert = (p_value < alpha) and (gap > gap_threshold)
-
-    logger.info(
-        f"Dérive : réf={mape_ref:.2f}% (n={len(reference_mapes)}) run={mape_run:.2f}% "
-        f"gap={gap*100:+.1f}% p={p_value:.4f} → {'DERIVE' if drift_alert else 'OK'}"
-    )
-    return {'mape_ref': round(mape_ref, 3), 'mape_run': round(mape_run, 3),
-            'gap_pct': round(gap * 100, 1), 'p_value': round(p_value, 4),
-            'drift_alert': drift_alert, 'tested': True, 'n_ref': len(reference_mapes)}
-
-
-def should_promote(mape_test_set: float, drift: dict) -> tuple[bool, str]:
-    """Retourne (True, raison) si le modèle peut être promu en Production."""
-    if drift['drift_alert']:
-        return False, (f"dérive détectée (run={drift['mape_run']:.2f}% vs "
-                       f"réf={drift['mape_ref']:.2f}%, gap={drift['gap_pct']:+.1f}%, "
-                       f"p={drift['p_value']:.4f})")
+def should_promote(mape_test_set: float, ref_mapes: list) -> tuple[bool, str]:
+    """Retourne (True, raison) si le modèle peut être promu en Production.
+    Deux gates : seuil absolu (filet de sécurité) + seuil adaptatif mean+k*std."""
     if mape_test_set > MAPE_MAX_PROMOTE:
-        return False, f"MAPE test set {mape_test_set:.2f}% > seuil {MAPE_MAX_PROMOTE}%"
-    suffix = "" if drift['tested'] else " (réf. dérive en constitution)"
-    return True, f"MAPE={mape_test_set:.2f}% OK, pas de dérive{suffix}"
+        return False, f"MAPE test set {mape_test_set:.2f}% > seuil absolu {MAPE_MAX_PROMOTE}%"
+
+    if len(ref_mapes) >= DRIFT_MIN_REF:
+        threshold = np.mean(ref_mapes) + DRIFT_K * np.std(ref_mapes)
+        logger.info(f"Seuil adaptatif : {np.mean(ref_mapes):.2f}% + {DRIFT_K}*{np.std(ref_mapes):.2f}% "
+                    f"= {threshold:.2f}% (n={len(ref_mapes)})")
+        if mape_test_set > threshold:
+            return False, (f"MAPE test set {mape_test_set:.2f}% > seuil adaptatif "
+                           f"{threshold:.2f}% (mean+{DRIFT_K}*std, n={len(ref_mapes)})")
+
+    suffix = "" if len(ref_mapes) >= DRIFT_MIN_REF else " (référence en constitution)"
+    return True, f"MAPE={mape_test_set:.2f}% OK{suffix}"
 
 
 # Promotion dans le Model Registry
@@ -192,15 +158,15 @@ def _build_test_set_temps(df_temp_hist: pd.DataFrame,
     puis prévisions Open-Meteo telles qu'enregistrées à cette date dans temp_forecast_log.csv.
     Fallback sur les températures réelles si le journal est absent ou trop court.
     """
-    log_path = data_dir / 'temp_forecast_log.csv'
-    hold_ts  = pd.Timestamp(test_set_start)
+    log_path    = data_dir / 'temp_forecast_log.csv'
+    test_set_ts = pd.Timestamp(test_set_start)
 
     if not log_path.exists():
         logger.warning("Test set : temp_forecast_log.csv absent → températures réelles utilisées")
         return df_temp_hist
 
     df_log    = pd.read_csv(log_path, parse_dates=['ds', 'run_date'])
-    past_runs = df_log[df_log['run_date'].dt.normalize() <= hold_ts]['run_date'].unique()
+    past_runs = df_log[df_log['run_date'].dt.normalize() <= test_set_ts]['run_date'].unique()
 
     if len(past_runs) == 0:
         logger.warning("Test set : aucun run avant test_set_start → températures réelles utilisées")
@@ -209,13 +175,15 @@ def _build_test_set_temps(df_temp_hist: pd.DataFrame,
     closest_run = pd.Timestamp(max(past_runs))
     df_fc = (df_log[df_log['run_date'].dt.normalize() == closest_run.normalize()]
              [['ds', 'temp', 'temp_min', 'temp_max']]
-             .query('ds >= @hold_ts')
+             .query('ds >= @test_set_ts')
              .copy())
 
-    df_before  = df_temp_hist[df_temp_hist['ds'] < hold_ts]
-    df_after   = df_temp_hist[df_temp_hist['ds'] >= hold_ts]
+    df_before = df_temp_hist[df_temp_hist['ds'] < test_set_ts]
+    df_after  = df_temp_hist[df_temp_hist['ds'] >= test_set_ts]
 
-    # Prévisions là où disponibles, températures réelles en fallback
+    # Prévisions là où disponibles, températures réelles en fallback.
+    # get_temperature_forecast couvre ~30 jours, le test set en fait 56 :
+    # la seconde moitié garde les températures réelles (biais météo parfaite résiduel).
     merged = df_after.merge(df_fc, on='ds', how='left', suffixes=('_real', '_fc'))
     df_test_set = merged.assign(
         temp     = lambda d: d['temp_fc'].fillna(d['temp_real']),
@@ -225,7 +193,8 @@ def _build_test_set_temps(df_temp_hist: pd.DataFrame,
 
     n_fc = merged['temp_fc'].notna().sum()
     logger.info(f"Test set : prévisions du run {closest_run.date()} "
-                f"({n_fc}/{len(df_after)} jours couverts, reste en réel)")
+                f"({n_fc}/{len(df_after)} jours couverts par les prévisions, "
+                f"{len(df_after) - n_fc} jours en températures réelles)")
 
     return pd.concat([df_before, df_test_set]).reset_index(drop=True)
 
@@ -268,7 +237,7 @@ def run(dry_run: bool = False, df_daily: pd.DataFrame = None):
 
     # 4. Entraînement du modèle-INSTRUMENT sur [TRAIN_START → test_set_start].
     #    Il sert UNIQUEMENT à mesurer la qualité sur le test set ; il n'est jamais
-    #    déployé (cf. étape 9 : le modèle promu est réentraîné sur 100% des données).
+    #    déployé (cf. étape 7 : le modèle promu est réentraîné sur 100% des données).
     logger.info(f"Entraînement (instrument d'éval) sur [TRAIN_START → {test_set_start}]...")
     m_7j  = train(df_7j_eval,  model='7j',  train_start=TRAIN_START, train_end=test_set_start)
     m_30j = train(df_30j_eval, model='30j', train_start=TRAIN_START, train_end=test_set_start)
@@ -297,13 +266,11 @@ def run(dry_run: bool = False, df_daily: pd.DataFrame = None):
     logger.info(f"MAPE test set 7j  : {mape_7j:.2f}%  MAE={mae_7j:,.0f}MW  ({len(weeks_7j)} semaines)")
     logger.info(f"MAPE test set 30j : {mape_30j:.2f}%  MAE={mae_30j:,.0f}MW  ({len(weeks_30j)} semaines)")
 
-    # 7. Test de dérive vs distribution récente des MAPE de validation production
-    drift_7j  = test_drift(load_reference_mapes('7j'),  [w['mape'] for w in weeks_7j])
-    drift_30j = test_drift(load_reference_mapes('30j'), [w['mape'] for w in weeks_30j])
-
-    # 8. Décision de promotion (les deux modèles ensemble ou aucun)
-    ok_7j,  reason_7j  = should_promote(mape_7j,  drift_7j)
-    ok_30j, reason_30j = should_promote(mape_30j, drift_30j)
+    # 7. Décision de promotion (les deux modèles ensemble ou aucun)
+    ref_7j  = load_reference_mapes('7j')
+    ref_30j = load_reference_mapes('30j')
+    ok_7j,  reason_7j  = should_promote(mape_7j,  ref_7j)
+    ok_30j, reason_30j = should_promote(mape_30j, ref_30j)
     promote = ok_7j and ok_30j
 
     if promote:
@@ -316,14 +283,13 @@ def run(dry_run: bool = False, df_daily: pd.DataFrame = None):
             reasons.append(f"30j : {reason_30j}")
         logger.warning(f"⚠️  Promotion refusée : {' | '.join(reasons)}")
 
-    # 9. MLflow logging
+    # 8. MLflow logging
     mlflow.set_tracking_uri(MLFLOW_DB)
     mlflow.set_experiment(EXPERIMENT_NAME)
 
     with mlflow.start_run(run_name=f"retrain_{today}") as run_ctx:
         run_id = run_ctx.info.run_id
 
-        # Paramètres
         mlflow.log_params({
             'train_start'    : TRAIN_START,
             'test_set_start' : test_set_start,
@@ -334,25 +300,19 @@ def run(dry_run: bool = False, df_daily: pd.DataFrame = None):
         mlflow.log_params({f'7j_{k}':  v for k, v in BEST_PARAMS_7J.items()})
         mlflow.log_params({f'30j_{k}': v for k, v in BEST_PARAMS_30J.items()})
 
-        # Métriques test set
-        mlflow.log_metrics({
+        metrics = {
             'mape_test_set_7j'  : mape_7j,
             'mae_test_set_7j'   : mae_7j,
             'mape_test_set_30j' : mape_30j,
             'mae_test_set_30j'  : mae_30j,
-            'n_weeks_7j'       : len(weeks_7j),
-            'n_weeks_30j'      : len(weeks_30j),
-        })
-
-        # Métriques dérive (gap/p-value uniquement quand le test a réellement tourné)
-        drift_metrics = {}
-        for tag, d in [('7j', drift_7j), ('30j', drift_30j)]:
-            drift_metrics[f'drift_alert_{tag}']  = int(d['drift_alert'])
-            drift_metrics[f'drift_tested_{tag}'] = int(d['tested'])
-            if d['tested']:
-                drift_metrics[f'drift_gap_{tag}_pct'] = d['gap_pct']
-                drift_metrics[f'drift_pvalue_{tag}']  = d['p_value']
-        mlflow.log_metrics(drift_metrics)
+            'n_weeks_7j'        : len(weeks_7j),
+            'n_weeks_30j'       : len(weeks_30j),
+        }
+        for tag, ref in [('7j', ref_7j), ('30j', ref_30j)]:
+            if len(ref) >= DRIFT_MIN_REF:
+                metrics[f'adaptive_threshold_{tag}'] = np.mean(ref) + DRIFT_K * np.std(ref)
+                metrics[f'n_ref_{tag}']              = len(ref)
+        mlflow.log_metrics(metrics)
 
         # Enregistrement + promotion.
         # IMPORTANT : on déploie un modèle réentraîné sur 100% des données (train_end=None).
@@ -383,12 +343,9 @@ def run(dry_run: bool = False, df_daily: pd.DataFrame = None):
             logger.info("Pas de promotion (rejet ou dry-run) : "
                         "aucun modèle enregistré dans le registry")
 
-        # Tags de synthèse
         mlflow.set_tags({
             'run_date'        : today,
             'test_set_start'  : test_set_start,
-            'drift_7j'        : str(drift_7j['drift_alert']),
-            'drift_30j'       : str(drift_30j['drift_alert']),
             'promote_decision': 'promoted' if (promote and not dry_run) else
                                 'dry_run'  if (promote and dry_run)     else
                                 'rejected',
@@ -404,11 +361,9 @@ def run(dry_run: bool = False, df_daily: pd.DataFrame = None):
     logger.info(f"{'='*60}")
 
     return {
-        'promoted'   : promote and not dry_run,
-        'mape_7j'    : mape_7j,
-        'mape_30j'   : mape_30j,
-        'drift_7j'   : drift_7j,
-        'drift_30j'  : drift_30j,
+        'promoted' : promote and not dry_run,
+        'mape_7j'  : mape_7j,
+        'mape_30j' : mape_30j,
     }
 
 
