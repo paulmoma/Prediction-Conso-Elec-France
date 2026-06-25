@@ -6,7 +6,6 @@ Lancement : streamlit run app.py
 """
 
 import pandas as pd
-import numpy as np
 import streamlit as st
 import plotly.graph_objects as go
 from datetime import date, timedelta
@@ -24,13 +23,18 @@ COLOR_30J   = '#c06c75'   # prévision 30 jours — argile
 COLOR_TEMP  = '#e0a23a'   # température — ambre
 COLOR_SPLIT = '#9aa7b0'   # repère début de prévision / seuils — gris
 
-# Couleurs pour les runs passés superposés (graphe de validation).
-PALETTE = [
-    '#2c8c99', '#c06c75', '#7a9e6b', '#9b7cb0',
-    '#e0a23a', '#5a8bb0', '#b07d4f', '#6a8f8f',
-]
-
 FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif'
+
+# Config commune des graphes : pas de barre d'outils, mise en page sobre,
+# grille horizontale seule, virgule décimale (format FR).
+PLOTLY_CONFIG = {'displayModeBar': False}
+BASE_LAYOUT = dict(
+    template='plotly_white',
+    font=dict(family=FONT, size=12),
+    separators=', ',                       # décimale = virgule, milliers = espace
+    xaxis=dict(showgrid=False),
+    hoverlabel=dict(font_family=FONT),
+)
 
 # Configuration page
 st.set_page_config(
@@ -177,18 +181,17 @@ def make_forecast_chart(df_hist: pd.DataFrame,
         if gap_days > 1:
             mid_gap = last_rte + (split - last_rte) / 2
             fig.add_annotation(
-                x=mid_gap, y=1, yref='paper',
-                text=f'données RTE<br>non publiées<br>({gap_days}j)',
+                x=mid_gap, y=0, yref='paper', yanchor='top',
+                text=f'données RTE non publiées ({gap_days}j)',
                 showarrow=False, font=dict(size=10, color=COLOR_SPLIT),
-                bgcolor='white', opacity=0.7,
             )
 
     fig.update_layout(
+        **BASE_LAYOUT,
         title=title, yaxis_title='GW',
         hovermode='x unified', height=350,
-        template='plotly_white', font=dict(family=FONT, size=12),
         legend=dict(orientation='h', y=1.02),
-        margin=dict(t=60, b=40),
+        margin=dict(t=60, b=55),
     )
     return fig
 
@@ -209,9 +212,9 @@ def make_temp_figure(df_temp: pd.DataFrame, title: str = '') -> go.Figure:
     fig.add_hline(y=15, line_dash='dot', line_color=COLOR_SPLIT,
                   annotation_text='Seuil chauffage (15°C)')
     fig.update_layout(
+        **BASE_LAYOUT,
         title=title, height=220, yaxis_title='°C',
-        margin=dict(t=30, b=30), template='plotly_white',
-        font=dict(family=FONT, size=12),
+        margin=dict(t=30, b=30),
     )
     return fig
 
@@ -246,23 +249,27 @@ def make_past_forecast_chart(df_rte: pd.DataFrame,
         line=dict(color=color, width=2, dash='dash'), mode='lines'
     ))
 
-    fig.add_vline(x=fc_start, line_dash='dot', line_color=COLOR_SPLIT, opacity=0.7,
-                  annotation_text='date du run', annotation_position='top left',
-                  annotation_font=dict(size=10, color=COLOR_SPLIT))
-    fig.update_xaxes(range=x_range)
+    fig.add_vline(x=fc_start, line_dash='dot', line_color=COLOR_SPLIT, opacity=0.7)
+    fig.add_annotation(
+        x=fc_start, y=0, yref='paper', yanchor='top',
+        text='date du run', showarrow=False,
+        font=dict(size=10, color=COLOR_SPLIT),
+    )
     fig.update_layout(
+        **BASE_LAYOUT,
         title=f'Prévision {label} du {run_date} — réalisé vs prévu',
         yaxis_title='GW', hovermode='x unified', height=360,
-        template='plotly_white', font=dict(family=FONT, size=12),
-        legend=dict(orientation='h', y=1.02), margin=dict(t=60, b=10),
+        legend=dict(orientation='h', y=1.02), margin=dict(l=60, t=60, b=45),
     )
+    fig.update_xaxes(range=x_range)
     return fig
 
 
 def make_past_temp_chart(df_actual_temp: pd.DataFrame,
                           df_temp_run: pd.DataFrame,
                           fc_start: pd.Timestamp,
-                          x_range: list) -> go.Figure:
+                          x_range: list,
+                          title: str = 'Température (moyenne) au run : prévu vs réalisé') -> go.Figure:
     fig = go.Figure()
 
     df_win = df_actual_temp[
@@ -274,81 +281,34 @@ def make_past_temp_chart(df_actual_temp: pd.DataFrame,
     if not df_before.empty:
         fig.add_trace(go.Scatter(
             x=df_before['ds'], y=df_before['temp'],
-            name='Temp. vérifiée', line=dict(color=COLOR_HIST, width=1.5), mode='lines'
+            name='Observé (avant run)', line=dict(color=COLOR_HIST, width=1.5), mode='lines'
         ))
     if not df_during.empty:
         fig.add_trace(go.Scatter(
             x=df_during['ds'], y=df_during['temp'],
-            name='Temp. réalisée', line=dict(color=COLOR_HIST, width=2, dash='dot'), mode='lines'
+            name='Observé (après run)', line=dict(color=COLOR_HIST, width=2, dash='dot'), mode='lines'
         ))
     if not df_temp_run.empty:
         df_temp_run = df_temp_run[df_temp_run['ds'] >= fc_start]
         fig.add_trace(go.Scatter(
             x=df_temp_run['ds'], y=df_temp_run['temp'],
-            name='Temp. prédite au run',
+            name='Prévisions futures à la date du run',
             line=dict(color=COLOR_TEMP, width=2, dash='dash'), mode='lines'
         ))
 
-    fig.add_vline(x=fc_start, line_dash='dot', line_color=COLOR_SPLIT, opacity=0.7,
-                  annotation_text='date du run', annotation_position='top left',
-                  annotation_font=dict(size=10, color=COLOR_SPLIT))
+    fig.add_vline(x=fc_start, line_dash='dot', line_color=COLOR_SPLIT, opacity=0.7)
+    fig.add_annotation(
+        x=fc_start, y=0, yref='paper', yanchor='top',
+        text='date du run', showarrow=False,
+        font=dict(size=10, color=COLOR_SPLIT),
+    )
+    fig.update_layout(
+        **BASE_LAYOUT,
+        title=title, height=240, yaxis_title='°C', hovermode='x unified',
+        margin=dict(l=60, t=40, b=45),
+        legend=dict(orientation='h', y=1.02),
+    )
     fig.update_xaxes(range=x_range)
-    fig.update_layout(
-        height=220, yaxis_title='°C', hovermode='x unified',
-        margin=dict(t=10, b=30), template='plotly_white',
-        font=dict(family=FONT, size=12),
-        legend=dict(orientation='h', y=1.02),
-    )
-    return fig
-
-
-def make_validation_chart(df_rte: pd.DataFrame,
-                           past_fcs: dict,
-                           selected_runs: list[str],
-                           model: str) -> go.Figure:
-    fig = go.Figure()
-
-    fc_dates = []
-    for run_date in selected_runs:
-        df_fc = past_fcs.get(run_date)
-        if df_fc is not None:
-            fc_dates.extend(df_fc['ds'].tolist())
-
-    if fc_dates:
-        x_min = min(fc_dates) - timedelta(days=14)
-        x_max = max(fc_dates) + timedelta(days=2)
-        df_rte_win = df_rte[(df_rte['ds'] >= x_min) & (df_rte['ds'] <= x_max)]
-    else:
-        df_rte_win = df_rte
-
-    if not df_rte_win.empty:
-        fig.add_trace(go.Scatter(
-            x=df_rte_win['ds'], y=df_rte_win['y'],
-            name='Réalisé RTE', line=dict(color=COLOR_HIST, width=2),
-            mode='lines'
-        ))
-
-    for i, run_date in enumerate(selected_runs):
-        df_fc = past_fcs.get(run_date)
-        if df_fc is None:
-            continue
-        color = PALETTE[i % len(PALETTE)]
-        fig.add_trace(go.Scatter(
-            x=df_fc['ds'], y=df_fc['yhat'],
-            name=f'Prév. {run_date}',
-            line=dict(color=color, width=1.5, dash='dash'),
-            mode='lines'
-        ))
-
-    label = '7 jours' if model == '7j' else '30 jours'
-    fig.update_layout(
-        title=f'Réalisé vs prévisions passées — modèle {label}',
-        yaxis_title='GW',
-        hovermode='x unified', height=420,
-        template='plotly_white', font=dict(family=FONT, size=12),
-        legend=dict(orientation='h', y=1.02),
-        margin=dict(t=60, b=40),
-    )
     return fig
 
 
@@ -398,17 +358,12 @@ with tab1:
         title='Prévision J+7 — consommation France (GW)',
         color=COLOR_7J
     )
-    st.plotly_chart(fig_7j, use_container_width=True)
+    st.plotly_chart(fig_7j, use_container_width=True, config=PLOTLY_CONFIG)
 
-    if not fc_7j.empty:
-        st.dataframe(
-            fc_7j[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].rename(columns={
-                'ds': 'Date', 'yhat': 'Prévision (GW)',
-                'yhat_lower': 'Borne basse', 'yhat_upper': 'Borne haute'
-            }).style.format({'Prévision (GW)': '{:.2f}',
-                             'Borne basse': '{:.2f}', 'Borne haute': '{:.2f}'}),
-            use_container_width=True, hide_index=True
-        )
+    if not df_temp.empty and 'temp' in df_temp.columns:
+        st.subheader('Températures prévues')
+        st.caption('4 points ruraux pondérés, hors îlots de chaleur urbains')
+        st.plotly_chart(make_temp_figure(df_temp), use_container_width=True, config=PLOTLY_CONFIG, key='temp_7j')
 
 with tab2:
     fig_30j = make_forecast_chart(
@@ -416,11 +371,15 @@ with tab2:
         title='Prévision J+30 — consommation France (GW)',
         color=COLOR_30J
     )
-    st.plotly_chart(fig_30j, use_container_width=True)
+    st.plotly_chart(fig_30j, use_container_width=True, config=PLOTLY_CONFIG)
+    if not df_temp.empty and 'temp' in df_temp.columns:
+        st.subheader('Températures prévues')
+        st.caption('4 points ruraux pondérés, hors îlots de chaleur urbains')
+        st.plotly_chart(make_temp_figure(df_temp), use_container_width=True, config=PLOTLY_CONFIG, key='temp_30j')
 
 with tab3:
-    col_a, col_b = st.columns([1, 3])
-    with col_a:
+    c1, c2, _ = st.columns([1.1, 1.6, 2.3])
+    with c1:
         model_sel = st.radio('Modèle', ['7j', '30j'], horizontal=True)
 
     past_fcs = load_past_forecasts(model_sel)
@@ -429,9 +388,13 @@ with tab3:
     if not all_runs:
         st.info("Aucune prévision datée disponible dans data/forecasts/")
     else:
-        with col_a:
-            default_run = all_runs[1] if len(all_runs) > 1 else all_runs[0]
-            selected_run = st.selectbox('Run', options=all_runs, index=all_runs.index(default_run))
+        with c2:
+            # Défaut sur l'avant-dernier run : le dernier n'a pas encore de réalisé à comparer.
+            cutoff = str(date.today() - timedelta(days=5))
+            older  = [r for r in all_runs if r <= cutoff]
+            default_run = older[0] if older else all_runs[-1]
+            selected_run = st.selectbox('Run', options=all_runs,
+                                        index=all_runs.index(default_run))
 
         df_rte_val = load_rte_actual(days=180)
         df_fc_sel  = past_fcs[selected_run]
@@ -442,16 +405,15 @@ with tab3:
         x_range      = [window_start, fc_end]
 
         fig_past = make_past_forecast_chart(df_rte_val, df_fc_sel, selected_run, model_sel, x_range)
-        st.plotly_chart(fig_past, use_container_width=True)
+        st.plotly_chart(fig_past, use_container_width=True, config=PLOTLY_CONFIG)
 
-        df_temp_log  = load_temp_forecast_log()
         df_temp_hist = load_temp_history()
+        df_temp_log  = load_temp_forecast_log()
         run_ts       = pd.Timestamp(selected_run)
-        df_temp_run  = df_temp_log[df_temp_log['run_date'] == run_ts] if not df_temp_log.empty else pd.DataFrame()
-
+        df_temp_run  = df_temp_log[df_temp_log['run_date'].dt.normalize() == run_ts.normalize()] if not df_temp_log.empty else pd.DataFrame()
         if not df_temp_hist.empty or not df_temp_run.empty:
             fig_temp = make_past_temp_chart(df_temp_hist, df_temp_run, fc_start, x_range)
-            st.plotly_chart(fig_temp, use_container_width=True)
+            st.plotly_chart(fig_temp, use_container_width=True, config=PLOTLY_CONFIG)
 
         df_log = load_validation_log()
         if not df_log.empty:
@@ -478,23 +440,19 @@ with tab3:
         else:
             st.info("validation_log.csv absent, il sera créé au prochain run_weekly.py")
 
-# Température prévue
-if not df_temp.empty and 'temp' in df_temp.columns:
-    st.subheader('Températures prévues')
-    st.caption('4 points ruraux pondérés, hors îlots de chaleur urbains')
-    st.plotly_chart(make_temp_figure(df_temp), use_container_width=True)
+
 
 # À propos
 with st.expander('À propos du modèle'):
     st.markdown("""
-Modèle Facebook Prophet (GAM) avec régresseurs exogènes.
+Modèle Facebook Prophet (GAM) avec variables externes.
 
 Variables externes : indicateurs thermiques chaud/froid sur les températures min, max et
 moyenne ; lag saisonnier (4 jours l'hiver, 2 l'été) pour l'inertie thermique des bâtiments ;
 part d'élèves en vacances scolaires, zones A/B/C pondérées.
 
 Données météo : 4 points ruraux pondérés, choisis hors îlots de chaleur urbains pour
-représenter les principaux climats français — Alençon 35 %, Bar-le-Duc 30 %,
+représenter les principaux climats français : Alençon 35 %, Bar-le-Duc 30 %,
 Périgueux 20 %, Montélimar 15 %.
 
 Entraînement : du 1er janvier 2023 à aujourd'hui moins 8 semaines (test set).
