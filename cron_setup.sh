@@ -16,7 +16,6 @@ fi
 chmod +x "$PROJECT_DIR/run_if_needed.sh"
 
 # Prévisions + validation + réentraînement : lundi et jeudi à 10h
-# run_weekly.py enchaîne les 3 étapes : validation rétro → prévisions → retrain
 (crontab -l 2>/dev/null; echo "# Energy Forecasting : run hebdomadaire") | crontab -
 (crontab -l 2>/dev/null; echo "0 10 * * 1,4 $PROJECT_DIR/run_if_needed.sh") | crontab -
 

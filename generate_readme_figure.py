@@ -7,6 +7,7 @@ Usage:
 """
 
 import warnings
+from datetime import date
 from pathlib import Path
 
 import matplotlib.dates as mdates
@@ -41,15 +42,14 @@ TRAIN_START = '2023-01-01'
 def build_data() -> pd.DataFrame:
     df_rte  = load_rte_complete(DATA_DIR)
     df_temp = get_temperature_weighted(
-        start=TRAIN_START, end='2026-06-15',
+        start=TRAIN_START, end=str(date.today()),
         points=POINTS_RURAUX, cache_dir=DATA_DIR
     )
     df_model = build_df_model(df_rte, df_temp)
     return make_all_features(df_model, model='7j')
 
 
-def train_and_predict(df: pd.DataFrame, train_end: pd.Timestamp,
-                      week_start: pd.Timestamp, week_end: pd.Timestamp):
+def train_and_predict(df: pd.DataFrame, train_end: pd.Timestamp):
     df_train = df[
         (df['ds'] >= TRAIN_START) & (df['ds'] <= train_end)
     ][['ds', 'y'] + FEATURE_COLS_7J].dropna()
@@ -78,7 +78,7 @@ def make_figure(df: pd.DataFrame) -> plt.Figure:
         train_end  = week_start - pd.Timedelta(days=1)
         ctx_start  = week_start - pd.Timedelta(days=10)
 
-        fc       = train_and_predict(df, train_end, week_start, week_end)
+        fc       = train_and_predict(df, train_end)
         df_ctx   = df[(df['ds'] >= ctx_start) & (df['ds'] <= week_end)]
         df_pred  = fc[fc['ds'].between(week_start, week_end)]
         df_real  = df[df['ds'].between(week_start, week_end)].dropna(subset=['y'])
@@ -87,15 +87,10 @@ def make_figure(df: pd.DataFrame) -> plt.Figure:
                                               df_pred['yhat'].values) * 100
         mae  = mean_absolute_error(df_real['y'].values, df_pred['yhat'].values)
 
-        # Historique (contexte + semaine réelle)
         ax.plot(df_ctx['ds'], df_ctx['y'] / 1e3,
                 color='#333333', lw=1.2, ls='--', label='Réel', zorder=3)
-
-        # Prévision
         ax.plot(df_pred['ds'], df_pred['yhat'] / 1e3,
                 color='#2e7d32', lw=2.5, label='Prévision', zorder=4)
-
-        # Intervalle de confiance
         ax.fill_between(df_pred['ds'],
                         df_pred['yhat_lower'] / 1e3,
                         df_pred['yhat_upper'] / 1e3,
@@ -103,16 +98,11 @@ def make_figure(df: pd.DataFrame) -> plt.Figure:
 
         pct = df_real['pct_vac'].mean() if 'pct_vac' in df_real.columns else 0
 
-        # Séparation historique / prévision
         ax.axvline(week_start, color='#888888', ls=':', lw=1.2, zorder=5)
-
-        # Annotation MAPE
         ax.text(0.985, 0.94,
                 f'MAPE = {mape:.1f}%\nMAE  = {mae/1e3:.1f} GW',
                 transform=ax.transAxes, ha='right', va='top', fontsize=8,
                 bbox=dict(boxstyle='round,pad=0.3', fc='white', alpha=0.85))
-
-        # Mise en forme
         ax.xaxis.set_major_formatter(mdates.DateFormatter('%d %b'))
         ax.xaxis.set_major_locator(mdates.DayLocator(interval=2))
         ax.set_ylabel('GW', fontsize=9)

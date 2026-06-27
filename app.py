@@ -320,10 +320,11 @@ st.caption(
     f"modèle Prophet avec degrés-jours de chauffe et vacances scolaires"
 )
 
-fc_7j   = load_forecast('7j')
-fc_30j  = load_forecast('30j')
-df_hist = load_rte_actual(days=60)
-df_temp = load_temp_forecast()
+fc_7j    = load_forecast('7j')
+fc_30j   = load_forecast('30j')
+df_hist  = load_rte_actual(days=60)
+df_temp  = load_temp_forecast()
+df_vlog  = load_validation_log()
 
 # KPIs
 col1, col2, col3, col4, col5 = st.columns(5)
@@ -341,7 +342,13 @@ if not fc_30j.empty:
 if not df_temp.empty and 'temp' in df_temp.columns:
     col4.metric('Temp. demain (°C)', f'{df_temp["temp"].iloc[0]:.1f}°')
 
-col5.metric('MAPE production', '2,9 % / 2,5 %', help='Erreur moyenne, modèles 7 jours / 30 jours')
+if not df_vlog.empty:
+    m7  = df_vlog[df_vlog['model'] == '7j' ]['mape'].tail(10).mean()
+    m30 = df_vlog[df_vlog['model'] == '30j']['mape'].tail(10).mean()
+    col5.metric('MAPE production', f'{m7:.1f} % / {m30:.1f} %',
+                help='Moyenne glissante 10 derniers runs, modèles 7j / 30j')
+else:
+    col5.metric('MAPE production', '—', help='Données de validation non disponibles')
 
 st.divider()
 
@@ -457,8 +464,7 @@ Périgueux 20 %, Montélimar 15 %.
 
 Entraînement : du 1er janvier 2023 à aujourd'hui moins 8 semaines (test set).
 
-Performances : MAPE de 2,90 % sur le modèle 7 jours (CV Optuna 2,17 %, optimiste car biaisée
-par la sélection) et 2,53 % sur le modèle 30 jours, mesurée sur 5 mois de 2026.
+Les performances en production sont consultables dans l'onglet *Réalisé vs prévisions*.
 
 Sources : data.rte-france.fr · Open-Meteo Archive API.
     """)
