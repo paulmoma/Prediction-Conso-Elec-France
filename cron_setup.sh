@@ -17,13 +17,16 @@ chmod +x "$PROJECT_DIR/run_if_needed.sh"
 
 STREAMLIT_URL="https://prediction-conso-elec-france-szs2wnajdluqim2ybsxxk4.streamlit.app/"
 
+# Supprime les anciennes entrées Energy Forecasting avant de les recréer (idempotence)
+crontab -l 2>/dev/null | grep -v "Energy Forecasting\|run_if_needed\|$STREAMLIT_URL" | crontab -
+
 # Prévisions + validation + réentraînement : lundi et jeudi à 10h
 (crontab -l 2>/dev/null; echo "# Energy Forecasting : run hebdomadaire") | crontab -
 (crontab -l 2>/dev/null; echo "0 10 * * 1,4 $PROJECT_DIR/run_if_needed.sh") | crontab -
 
-# Ping 10h et 16h pour garder l'app Streamlit Cloud active (évite le cold start)
-(crontab -l 2>/dev/null; echo "# Energy Forecasting : ping Streamlit quotidien") | crontab -
-(crontab -l 2>/dev/null; echo "0 10,16 * * * curl -s '$STREAMLIT_URL' > /dev/null 2>&1") | crontab -
+# Ping toutes les 30 min 9h-17h en semaine pour garder l'app Streamlit Cloud active
+(crontab -l 2>/dev/null; echo "# Energy Forecasting : ping Streamlit") | crontab -
+(crontab -l 2>/dev/null; echo "*/30 9-17 * * 1-5 curl -s '$STREAMLIT_URL' > /dev/null 2>&1") | crontab -
 
 echo ""
 echo "✅ Cron configuré :"
