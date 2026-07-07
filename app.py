@@ -141,6 +141,24 @@ def load_temp_forecast_log() -> pd.DataFrame:
     return pd.read_csv(path, parse_dates=['ds', 'run_date'])
 
 
+def compute_past_mapes(past_fcs: dict, df_rte: pd.DataFrame) -> pd.DataFrame:
+    """Calcule MAPE et MAE pour chaque run passé sur les jours réalisés disponibles."""
+    rows = []
+    for run_date, df_fc in sorted(past_fcs.items()):
+        df_val = df_fc.merge(df_rte[['ds', 'y']], on='ds', how='inner').dropna()
+        if len(df_val) == 0:
+            continue
+        mape = (abs(df_val['y'] - df_val['yhat']) / abs(df_val['y'])).mean() * 100
+        mae  = abs(df_val['y'] - df_val['yhat']).mean() * 1000  # GW → MW
+        rows.append({
+            'Run'          : run_date,
+            'MAPE (%)'     : round(mape, 2),
+            'MAE (MW)'     : round(mae),
+            'Jours validés': len(df_val),
+        })
+    return pd.DataFrame(rows).sort_values('Run', ascending=False).reset_index(drop=True)
+
+
 # Chart helpers
 def make_forecast_chart(df_hist: pd.DataFrame,
                          df_fc: pd.DataFrame,
@@ -422,30 +440,17 @@ with tab3:
             fig_temp = make_past_temp_chart(df_temp_hist, df_temp_run, fc_start, x_range)
             st.plotly_chart(fig_temp, use_container_width=True, config=PLOTLY_CONFIG)
 
-        df_log = load_validation_log()
-        if not df_log.empty:
-            st.subheader('Historique des performances')
-            df_log_model = df_log[df_log['model'] == model_sel].copy()
-            if not df_log_model.empty:
-                df_log_model = df_log_model.sort_values('validation_date', ascending=False)
-                st.dataframe(
-                    df_log_model[['validation_date', 'run_date', 'mape', 'mae', 'n_days', 'alert']]
-                    .rename(columns={
-                        'validation_date': 'Date validation',
-                        'run_date'       : 'Run prévu le',
-                        'mape'           : 'MAPE (%)',
-                        'mae'            : 'MAE (MW)',
-                        'n_days'         : 'Jours validés',
-                        'alert'          : 'Alerte',
-                    })
-                    .style.format({'MAPE (%)': '{:.2f}', 'MAE (MW)': '{:,.0f}'})
-                    .map(lambda v: 'color: red' if v is True else '', subset=['Alerte']),
-                    use_container_width=True, hide_index=True
-                )
-            else:
-                st.info(f"Aucune validation enregistrée pour le modèle {model_sel}")
+        st.subheader('Performances par run')
+        df_perf = compute_past_mapes(past_fcs, df_rte_val)
+        if not df_perf.empty:
+            st.dataframe(
+                df_perf.style
+                    .format({'MAPE (%)': '{:.2f}', 'MAE (MW)': '{:,.0f}'})
+                    .map(lambda v: 'color: #c06c75; font-weight: bold' if isinstance(v, float) and v > 5 else '', subset=['MAPE (%)']),
+                use_container_width=True, hide_index=True
+            )
         else:
-            st.info("validation_log.csv absent, il sera créé au prochain run_weekly.py")
+            st.info("Pas encore de données réalisées disponibles pour calculer les performances.")
 
 
 
