@@ -141,8 +141,12 @@ def load_temp_forecast_log() -> pd.DataFrame:
     return pd.read_csv(path, parse_dates=['ds', 'run_date'])
 
 
-def compute_past_mapes(past_fcs: dict, df_rte: pd.DataFrame) -> pd.DataFrame:
-    """Calcule MAPE et MAE pour chaque run passé sur les jours réalisés disponibles."""
+def compute_past_mapes(past_fcs: dict, df_rte: pd.DataFrame,
+                        df_temp_log: pd.DataFrame = None,
+                        df_temp_hist: pd.DataFrame = None) -> pd.DataFrame:
+    """Calcule MAPE/MAE conso et MAE température pour chaque run passé."""
+    has_temp = (df_temp_log is not None and df_temp_hist is not None
+                and not df_temp_log.empty and not df_temp_hist.empty)
     rows = []
     for run_date, df_fc in sorted(past_fcs.items()):
         df_val = df_fc.merge(df_rte[['ds', 'y']], on='ds', how='inner').dropna()
@@ -150,10 +154,24 @@ def compute_past_mapes(past_fcs: dict, df_rte: pd.DataFrame) -> pd.DataFrame:
             continue
         mape = (abs(df_val['y'] - df_val['yhat']) / abs(df_val['y'])).mean() * 100
         mae  = abs(df_val['y'] - df_val['yhat']).mean() * 1000  # GW → MW
+
+        temp_mae = None
+        if has_temp:
+            run_ts   = pd.Timestamp(run_date)
+            df_pred  = df_temp_log[df_temp_log['run_date'].dt.normalize() == run_ts.normalize()]
+            df_pred  = df_pred[df_pred['ds'] > run_ts][['ds', 'temp']]
+            if not df_pred.empty:
+                merged = df_pred.merge(
+                    df_temp_hist[['ds', 'temp']].rename(columns={'temp': 'temp_actual'}), on='ds'
+                )
+                if not merged.empty:
+                    temp_mae = round(abs(merged['temp'] - merged['temp_actual']).mean(), 1)
+
         rows.append({
             'Run'          : run_date,
             'MAPE (%)'     : round(mape, 2),
             'MAE (MW)'     : round(mae),
+            'MAE temp (°C)': temp_mae,
             'Jours validés': len(df_val),
         })
     return pd.DataFrame(rows).sort_values('Run', ascending=False).reset_index(drop=True)
@@ -441,11 +459,11 @@ with tab3:
             st.plotly_chart(fig_temp, use_container_width=True, config=PLOTLY_CONFIG)
 
         st.subheader('Performances par run')
-        df_perf = compute_past_mapes(past_fcs, df_rte_val)
+        df_perf = compute_past_mapes(past_fcs, df_rte_val, df_temp_log, df_temp_hist)
         if not df_perf.empty:
             st.dataframe(
                 df_perf.style
-                    .format({'MAPE (%)': '{:.2f}', 'MAE (MW)': '{:,.0f}'})
+                    .format({'MAPE (%)': '{:.2f}', 'MAE (MW)': '{:,.0f}', 'MAE temp (°C)': '{:.1f}'}, na_rep='—')
                     .map(lambda v: 'color: #c06c75; font-weight: bold' if isinstance(v, float) and v > 5 else '', subset=['MAPE (%)']),
                 use_container_width=True, hide_index=True
             )
