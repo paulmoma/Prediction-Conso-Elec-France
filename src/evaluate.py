@@ -44,7 +44,7 @@ def compute_metrics_by_day(y_true: np.ndarray,
 
 def naive_seasonal_forecast(df: pd.DataFrame,
                               horizon: int,
-                              lag_days: int = 365) -> np.ndarray:
+                              lag_days: int = 364) -> np.ndarray:
     """Modèle naïf saisonnier : répète les valeurs d'il y a lag_days jours (baseline)."""
     y_all  = df['y'].values
     offset = len(y_all) - horizon - lag_days
