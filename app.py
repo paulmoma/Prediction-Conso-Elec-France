@@ -478,7 +478,8 @@ with st.expander('À propos du modèle'):
 Modèle Facebook Prophet (GAM) avec variables externes.
 
 Variables externes : indicateurs thermiques chaud/froid sur les températures min, max et
-moyenne ; lag saisonnier (4 jours l'hiver, 2 l'été) pour l'inertie thermique des bâtiments ;
+moyenne ; lag saisonnier (4 jours l'hiver ; 2 jours l'été pour le 7j, 1 jour pour le 30j)
+pour l'inertie thermique des bâtiments ;
 part d'élèves en vacances scolaires, zones A/B/C pondérées.
 
 Données météo : 4 points ruraux pondérés, choisis hors îlots de chaleur urbains pour

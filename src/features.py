@@ -64,6 +64,7 @@ VACANCES = {
         ('2025-07-05','2025-09-01'), ('2025-10-18','2025-11-03'),
         ('2025-12-20','2026-01-04'), ('2026-02-14','2026-03-01'),
         ('2026-04-18','2026-05-04'), ('2026-07-04','2026-09-01'),
+        # 2026-2027 : à compléter (source : education.gouv.fr)
     ],
     'B': [
         ('2023-02-04','2023-02-19'), ('2023-04-15','2023-05-02'),
@@ -75,6 +76,7 @@ VACANCES = {
         ('2025-07-05','2025-09-01'), ('2025-10-18','2025-11-03'),
         ('2025-12-20','2026-01-04'), ('2026-02-21','2026-03-08'),
         ('2026-04-25','2026-05-11'), ('2026-07-04','2026-09-01'),
+        # 2026-2027 : à compléter (source : education.gouv.fr)
     ],
     'C': [
         ('2023-02-18','2023-03-05'), ('2023-04-29','2023-05-15'),
@@ -86,12 +88,21 @@ VACANCES = {
         ('2025-07-05','2025-09-01'), ('2025-10-18','2025-11-03'),
         ('2025-12-20','2026-01-04'), ('2026-02-28','2026-03-15'),
         ('2026-05-02','2026-05-18'), ('2026-07-04','2026-09-01'),
+        # 2026-2027 : à compléter (source : education.gouv.fr)
     ],
 }
 
 
 def make_pct_vacances(dates: pd.Series) -> np.ndarray:
     """Retourne le % d'élèves en vacances pour chaque date (0.0 → 1.0)."""
+    import logging
+    last_covered = max(pd.Timestamp(end) for p in VACANCES.values() for _, end in p)
+    max_date = pd.Timestamp(dates.max())
+    if max_date > last_covered:
+        logging.getLogger(__name__).warning(
+            f"pct_vac : dates jusqu'au {max_date.date()} dépassent le calendrier "
+            f"(couvert jusqu'au {last_covered.date()}) — compléter VACANCES dans features.py"
+        )
     result = np.zeros(len(dates))
     for zone, periodes in VACANCES.items():
         w = POIDS_ZONES[zone]
