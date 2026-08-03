@@ -223,6 +223,18 @@ def main():
         logger.info("Chargement données RTE...")
         df_rte = load_rte_complete(DATA_DIR)
 
+        last_rte_date = df_rte['ds'].max().date()
+        yesterday     = date.today() - timedelta(days=1)
+        if last_rte_date < yesterday:
+            days_late = (yesterday - last_rte_date).days
+            logger.warning(
+                f"🚨 DONNÉES RTE NON À JOUR : dernière donnée disponible = {last_rte_date} "
+                f"({days_late} jour(s) de retard). L'API RTE (short_term/REALISED) est "
+                f"probablement indisponible ou n'a pas encore publié les jours récents. "
+                f"→ Les données locales en cache sont utilisées à la place ; "
+                f"relancer le pipeline plus tard pour rattraper le retard."
+            )
+
         # Étape 1 : validation rétrospective
         logger.info("── ÉTAPE 1 : Validation rétrospective ──")
         validation = validate_past_forecasts(df_rte)
