@@ -3,11 +3,12 @@ retrain.py
 Cycle de réentraînement avec test set 8 semaines.
 
 1. Entraîne un modèle-instrument sur [TRAIN_START → aujourd'hui - 8 semaines]
-2. Évalue sur les 8 dernières semaines (MAPE vs seuil)
-3. Si les métriques passent → réentraîne sur 100% des données, enregistre dans
-   MLflow Model Registry + promeut en Production
-4. Si échec → conserve le modèle Production actuel, run tagué 'rejected'
-   (aucun modèle n'est enregistré dans le registry)
+2. Évalue sur les 8 dernières semaines (MAPE vs seuil adaptatif)
+3. Chaque modèle (7j, 30j) est promu indépendamment selon son propre seuil.
+   Si un modèle passe → réentraîne sur 100% des données, enregistre dans
+   MLflow Model Registry + promeut en Production.
+4. Si un modèle échoue → il conserve la version Production actuelle ; l'autre
+   peut quand même être promu.
 
 Usage:
     python retrain.py            # évalue + promeut si OK
@@ -266,22 +267,20 @@ def run(dry_run: bool = False, df_daily: pd.DataFrame = None):
     logger.info(f"MAPE test set 7j  : {mape_7j:.2f}%  MAE={mae_7j:,.0f}MW  ({len(weeks_7j)} semaines)")
     logger.info(f"MAPE test set 30j : {mape_30j:.2f}%  MAE={mae_30j:,.0f}MW  ({len(weeks_30j)} semaines)")
 
-    # 7. Décision de promotion (les deux modèles ensemble ou aucun)
+    # 7. Décision de promotion — indépendante par modèle
     ref_7j  = load_reference_mapes('7j')
     ref_30j = load_reference_mapes('30j')
     ok_7j,  reason_7j  = should_promote(mape_7j,  ref_7j)
     ok_30j, reason_30j = should_promote(mape_30j, ref_30j)
-    promote = ok_7j and ok_30j
 
-    if promote:
-        logger.info("✅ Les deux modèles passent les critères → promotion en Production")
+    if ok_7j:
+        logger.info(f"✅ 7j  : {reason_7j} → promotion")
     else:
-        reasons = []
-        if not ok_7j:
-            reasons.append(f"7j : {reason_7j}")
-        if not ok_30j:
-            reasons.append(f"30j : {reason_30j}")
-        logger.warning(f"⚠️  Promotion refusée : {' | '.join(reasons)}")
+        logger.warning(f"⚠️  7j  : promotion refusée — {reason_7j}")
+    if ok_30j:
+        logger.info(f"✅ 30j : {reason_30j} → promotion")
+    else:
+        logger.warning(f"⚠️  30j : promotion refusée — {reason_30j}")
 
     # 8. MLflow logging
     mlflow.set_tracking_uri(MLFLOW_DB)
@@ -314,56 +313,70 @@ def run(dry_run: bool = False, df_daily: pd.DataFrame = None):
                 metrics[f'n_ref_{tag}']              = len(ref)
         mlflow.log_metrics(metrics)
 
-        # Enregistrement + promotion.
+        # Enregistrement + promotion indépendante par modèle.
         # IMPORTANT : on déploie un modèle réentraîné sur 100% des données (train_end=None).
         # Les m_7j/m_30j ci-dessus servent UNIQUEMENT à estimer la qualité sur le test set ;
         # le modèle mis en Production, lui, doit avoir vu les 8 dernières semaines.
-        # La MAPE test set reste l'estimateur (conservateur) de sa performance réelle.
-        # Conséquence : un run rejeté ou en dry-run n'enregistre RIEN dans le registry,
-        # et le modèle Production en place reste inchangé.
-        if promote and not dry_run:
-            logger.info("Réentraînement sur l'ensemble des données avant déploiement...")
-            m_7j_full  = train(df_7j,  model='7j',  train_start=TRAIN_START)   # train_end=None
-            m_30j_full = train(df_30j, model='30j', train_start=TRAIN_START)
-
-            logger.info("Enregistrement des modèles dans le Model Registry...")
-            mlflow.prophet.log_model(m_7j_full,  artifact_path='model_7j',
-                                      registered_model_name=MODEL_NAMES['7j'])
-            mlflow.prophet.log_model(m_30j_full, artifact_path='model_30j',
-                                      registered_model_name=MODEL_NAMES['30j'])
-
+        if (ok_7j or ok_30j) and not dry_run:
+            logger.info("Réentraînement sur l'ensemble des données pour les modèles promus...")
             client = mlflow.tracking.MlflowClient(MLFLOW_DB)
-            version_7j  = promote_to_production(client, MODEL_NAMES['7j'],  mape_7j,  run_id)
-            version_30j = promote_to_production(client, MODEL_NAMES['30j'], mape_30j, run_id)
-            mlflow.log_metrics({
-                'promoted_version_7j' : int(version_7j),
-                'promoted_version_30j': int(version_30j),
-            })
-        else:
-            logger.info("Pas de promotion (rejet ou dry-run) : "
-                        "aucun modèle enregistré dans le registry")
+            promoted_versions = {}
 
+            if ok_7j:
+                m_7j_full = train(df_7j, model='7j', train_start=TRAIN_START)
+                mlflow.prophet.log_model(m_7j_full, artifact_path='model_7j',
+                                          registered_model_name=MODEL_NAMES['7j'])
+                version_7j = promote_to_production(client, MODEL_NAMES['7j'], mape_7j, run_id)
+                promoted_versions['promoted_version_7j'] = int(version_7j)
+
+            if ok_30j:
+                m_30j_full = train(df_30j, model='30j', train_start=TRAIN_START)
+                mlflow.prophet.log_model(m_30j_full, artifact_path='model_30j',
+                                          registered_model_name=MODEL_NAMES['30j'])
+                version_30j = promote_to_production(client, MODEL_NAMES['30j'], mape_30j, run_id)
+                promoted_versions['promoted_version_30j'] = int(version_30j)
+
+            if promoted_versions:
+                mlflow.log_metrics(promoted_versions)
+        else:
+            if dry_run:
+                logger.info("Mode dry-run : aucune promotion effectuée")
+            else:
+                logger.info("Les deux modèles sont refusés : aucun modèle enregistré dans le registry")
+
+        promote_any = (ok_7j or ok_30j) and not dry_run
+        if ok_7j and ok_30j:
+            promote_decision = 'promoted_both' if not dry_run else 'dry_run'
+        elif ok_7j:
+            promote_decision = 'promoted_7j' if not dry_run else 'dry_run'
+        elif ok_30j:
+            promote_decision = 'promoted_30j' if not dry_run else 'dry_run'
+        else:
+            promote_decision = 'rejected'
         mlflow.set_tags({
-            'run_date'        : today,
-            'test_set_start'  : test_set_start,
-            'promote_decision': 'promoted' if (promote and not dry_run) else
-                                'dry_run'  if (promote and dry_run)     else
-                                'rejected',
+            'run_date'         : today,
+            'test_set_start'   : test_set_start,
+            'promote_decision' : promote_decision,
             'reject_reason_7j' : '' if ok_7j  else reason_7j,
             'reject_reason_30j': '' if ok_30j else reason_30j,
-            'status'           : '✅' if promote else '⚠️',
+            'status'           : '✅' if (ok_7j and ok_30j) else '⚠️',
         })
 
         logger.info(f"MLflow run : {run_id}")
 
+    promoted_7j  = ok_7j  and not dry_run
+    promoted_30j = ok_30j and not dry_run
     logger.info(f"{'='*60}")
-    logger.info(f"  Retrain terminé : {'PROMU ✅' if (promote and not dry_run) else 'NON PROMU ⚠️'}")
+    logger.info(f"  7j  : {'PROMU ✅'  if promoted_7j  else 'NON PROMU ⚠️'}")
+    logger.info(f"  30j : {'PROMU ✅'  if promoted_30j else 'NON PROMU ⚠️'}")
     logger.info(f"{'='*60}")
 
     return {
-        'promoted' : promote and not dry_run,
-        'mape_7j'  : mape_7j,
-        'mape_30j' : mape_30j,
+        'promoted'    : promoted_7j or promoted_30j,
+        'promoted_7j' : promoted_7j,
+        'promoted_30j': promoted_30j,
+        'mape_7j'     : mape_7j,
+        'mape_30j'    : mape_30j,
     }
 
 
