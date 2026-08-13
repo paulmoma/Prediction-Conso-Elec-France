@@ -36,6 +36,7 @@ MLFLOW_DB       = 'sqlite:///mlflow.db'
 EXPERIMENT_NAME = 'EF_Weekly'
 TRAIN_START     = '2023-01-01'
 MAPE_ALERT_PCT  = 5.0
+RTE_LAG_TOLERANCE_DAYS = 2  # décalage normal de publication des données RTE REALISED
 MODEL_NAMES     = {'7j': 'prophet_7j', '30j': 'prophet_30j'}
 
 FORECAST_DIR.mkdir(parents=True, exist_ok=True)
@@ -223,13 +224,14 @@ def main():
         logger.info("Chargement données RTE...")
         df_rte = load_rte_complete(DATA_DIR)
 
-        last_rte_date = df_rte['ds'].max().date()
-        yesterday     = date.today() - timedelta(days=1)
-        if last_rte_date < yesterday:
-            days_late = (yesterday - last_rte_date).days
+        last_rte_date  = df_rte['ds'].max().date()
+        oldest_ok_date = date.today() - timedelta(days=RTE_LAG_TOLERANCE_DAYS)
+        if last_rte_date < oldest_ok_date:
+            days_late = (date.today() - timedelta(days=1) - last_rte_date).days
             logger.warning(
                 f"🚨 DONNÉES RTE NON À JOUR : dernière donnée disponible = {last_rte_date} "
-                f"({days_late} jour(s) de retard). L'API RTE (short_term/REALISED) est "
+                f"({days_late} jour(s) de retard, au-delà du décalage normal de "
+                f"{RTE_LAG_TOLERANCE_DAYS} jours). L'API RTE (short_term/REALISED) est "
                 f"probablement indisponible ou n'a pas encore publié les jours récents. "
                 f"→ Les données locales en cache sont utilisées à la place ; "
                 f"relancer le pipeline plus tard pour rattraper le retard."
