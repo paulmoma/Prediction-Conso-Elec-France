@@ -177,7 +177,7 @@ def _fetch_open_meteo(lat: float, lon: float,
     last_err = None
     for attempt in range(retries):
         try:
-            r = requests.get(
+            resp = requests.get(
                 'https://archive-api.open-meteo.com/v1/archive',
                 params={
                     'latitude'  : lat, 'longitude': lon,
@@ -186,13 +186,15 @@ def _fetch_open_meteo(lat: float, lon: float,
                     'timezone'  : 'Europe/Paris',
                 },
                 timeout=timeout
-            ).json()
+            )
+            resp.raise_for_status()
+            r = resp.json()
             break
         except Exception as e:
             last_err = e
             if attempt < retries - 1:
                 wait = 5 * (attempt + 1)
-                logger.warning(f"Open-Meteo archive timeout (tentative {attempt+1}/{retries}), retry dans {wait}s...")
+                logger.warning(f"Open-Meteo archive : {type(e).__name__}: {e} (tentative {attempt+1}/{retries}), retry dans {wait}s...")
                 time.sleep(wait)
     else:
         raise ConnectionError(f"Open-Meteo archive inaccessible après {retries} tentatives : {last_err}")
